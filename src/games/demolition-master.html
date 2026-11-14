@@ -1,0 +1,1639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111417">
+<title>拆楼大师 · Demolition Master</title>
+<meta name="description" content="炸药有限，邻居在隔壁。把楼压到红线以下，别砸到不该砸的东西。">
+<style>
+:root{
+  --bg:#0E1114;
+  --ink:#E9EDF0;
+  --dim:#8B959E;
+  --faint:#5A646C;
+  --hot:#FF6A1F;
+  --warn:#FFC93C;
+  --safe:#5FD0A8;
+  --panel:rgba(16,19,23,.88);
+  --line:rgba(255,255,255,.10);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg)}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+}
+#app{height:100%;display:flex;align-items:center;justify-content:center}
+
+#stage{
+  position:relative;
+  width:1000px;height:640px;
+  transform-origin:center center;
+  overflow:hidden;
+  border-radius:3px;
+  box-shadow:0 24px 70px rgba(0,0,0,.6);
+  background:#0E1114;
+}
+canvas{display:block;width:1000px;height:640px}
+
+/* ---------- 顶部 HUD ---------- */
+#hud{
+  position:absolute;top:0;left:0;right:0;
+  padding:18px 26px 0;
+  display:flex;align-items:flex-start;justify-content:space-between;
+  pointer-events:none;
+  gap:20px;
+}
+.lv{display:flex;flex-direction:column;gap:5px;min-width:200px}
+.lv b{
+  font-size:14px;font-weight:600;letter-spacing:.16em;
+  color:var(--warn);
+}
+.lv span{font-size:11.5px;color:var(--dim);letter-spacing:.06em}
+
+#obj{
+  flex:1;text-align:center;
+  font-size:11.5px;letter-spacing:.1em;
+  color:rgba(233,237,240,.55);
+  padding-top:2px;
+}
+#obj b{color:var(--hot);font-weight:600}
+
+.dmg{
+  min-width:172px;text-align:right;
+  display:flex;flex-direction:column;gap:6px;align-items:flex-end;
+}
+.dmg span{font-size:10px;letter-spacing:.16em;color:var(--faint)}
+.dmgbar{
+  width:150px;height:4px;border-radius:99px;
+  background:rgba(255,255,255,.10);overflow:hidden;
+}
+.dmgbar i{
+  display:block;height:100%;width:0%;
+  background:var(--safe);border-radius:99px;
+  transition:width .25s ease, background .25s;
+}
+.dmgbar i.warn{background:var(--warn)}
+.dmgbar i.bad{background:var(--hot)}
+
+/* ---------- 底部 ---------- */
+#tnt{
+  position:absolute;left:26px;bottom:20px;
+  display:flex;align-items:center;gap:10px;
+  pointer-events:none;
+}
+#tnt>span{font-size:10px;letter-spacing:.18em;color:var(--faint)}
+#dots{display:flex;gap:4px}
+#dots i{
+  width:9px;height:15px;border-radius:2px;
+  background:var(--hot);
+  box-shadow:0 0 8px rgba(255,106,31,.55);
+  transition:.2s;
+}
+#dots i.used{background:rgba(255,255,255,.13);box-shadow:none}
+
+#hint{
+  position:absolute;left:50%;bottom:22px;transform:translateX(-50%);
+  font-size:12px;letter-spacing:.1em;
+  color:rgba(233,237,240,.45);
+  white-space:nowrap;
+  transition:color .2s;
+}
+#hint.live{color:var(--warn)}
+
+#boomBtn{
+  position:absolute;right:26px;bottom:16px;
+  font:inherit;font-size:12px;letter-spacing:.32em;
+  padding:12px 26px 12px 30px;
+  color:#14171A;font-weight:600;
+  background:linear-gradient(180deg,#FFC93C,#F0A81E);
+  border:none;border-radius:3px;
+  cursor:pointer;
+  transition:.15s;
+  box-shadow:0 6px 18px rgba(240,168,30,.28);
+}
+#boomBtn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 9px 22px rgba(240,168,30,.4)}
+#boomBtn:active:not(:disabled){transform:translateY(1px)}
+#boomBtn:disabled{
+  background:rgba(255,255,255,.07);
+  color:rgba(233,237,240,.24);
+  box-shadow:none;cursor:default;
+}
+
+/* ---------- 提示 ---------- */
+#toast{
+  position:absolute;left:50%;top:78px;transform:translateX(-50%) translateY(-8px);
+  background:rgba(12,15,18,.92);
+  border:1px solid var(--line);
+  color:var(--ink);
+  font-size:12.5px;letter-spacing:.04em;
+  padding:9px 18px;
+  border-radius:999px;
+  opacity:0;pointer-events:none;
+  transition:opacity .22s, transform .22s;
+  white-space:nowrap;
+}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ---------- 覆盖层 ---------- */
+#overlay{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(10,12,15,.80);
+  backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;
+  transition:opacity .28s;
+}
+#overlay.show{opacity:1;pointer-events:auto}
+
+.title-card{width:560px;text-align:center}
+.eyebrow{
+  font-size:9.5px;letter-spacing:.42em;color:var(--faint);
+  margin-bottom:20px;
+}
+h1{
+  font-size:62px;font-weight:800;letter-spacing:.06em;
+  line-height:1.05;margin-bottom:14px;
+  background:linear-gradient(180deg,#FFFFFF 30%,#8B959E);
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+.sub{font-size:13.5px;color:var(--dim);margin-bottom:32px;letter-spacing:.04em}
+
+.rules{display:flex;flex-direction:column;gap:10px;text-align:left;width:340px;margin:0 auto 22px}
+.rules div{display:flex;gap:14px;align-items:baseline}
+.rules b{
+  font-size:9.5px;font-weight:600;color:var(--hot);
+  letter-spacing:.1em;flex:none;width:18px;
+}
+.rules span{font-size:12.5px;color:#B9C2C9;line-height:1.65}
+
+.warn{font-size:11.5px;color:var(--faint);margin-bottom:26px;letter-spacing:.04em}
+
+.primary{
+  font:inherit;font-size:13px;font-weight:600;letter-spacing:.22em;
+  color:#14171A;
+  background:linear-gradient(180deg,#FFC93C,#F0A81E);
+  border:none;border-radius:3px;
+  padding:14px 46px;cursor:pointer;
+  transition:.16s;
+  box-shadow:0 8px 24px rgba(240,168,30,.25);
+}
+.primary:hover{transform:translateY(-1px);box-shadow:0 12px 28px rgba(240,168,30,.38)}
+.ghost{
+  font:inherit;font-size:12px;letter-spacing:.1em;
+  color:rgba(233,237,240,.55);
+  background:transparent;
+  border:1px solid var(--line);
+  border-radius:3px;
+  padding:14px 24px;cursor:pointer;transition:.15s;
+}
+.ghost:hover{color:var(--ink);border-color:rgba(255,255,255,.28)}
+
+/* ---------- 结算 ---------- */
+.card{width:480px;text-align:center}
+.card h2{
+  font-size:36px;font-weight:800;letter-spacing:.06em;
+  margin:4px 0 8px;
+}
+.card h2.bad{color:var(--hot)}
+.card h2.good{color:var(--safe)}
+.card .why{font-size:12.5px;color:var(--dim);margin-bottom:24px}
+
+.stars{display:flex;gap:10px;justify-content:center;margin-bottom:26px}
+.stars i{
+  font-style:normal;font-size:22px;color:rgba(255,255,255,.10);
+  transition:.2s;
+}
+.stars i.on{color:var(--warn);text-shadow:0 0 16px rgba(255,201,60,.6)}
+
+.grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--line);border:1px solid var(--line);
+  border-radius:4px;overflow:hidden;margin-bottom:26px;
+}
+.grid div{background:#151A1E;padding:14px 8px;line-height:1.2}
+.grid b{display:block;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.grid span{display:block;font-size:10px;color:var(--faint);letter-spacing:.12em;margin-top:6px}
+
+.row-btn{display:flex;gap:10px;justify-content:center}
+
+#rotate{display:none}
+@media (max-width:760px) and (orientation:portrait){
+  #rotate{
+    display:flex;position:absolute;inset:0;
+    align-items:center;justify-content:center;
+    background:#0E1114;color:rgba(233,237,240,.55);
+    font-size:12px;letter-spacing:.24em;
+  }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="c" width="1000" height="640"></canvas>
+
+    <div id="hud">
+      <div class="lv">
+        <b id="lvName">第一拆</b>
+        <span id="lvSub">老纺织厂 · 六层砖混</span>
+      </div>
+      <div id="obj">把楼体压到 <b>红线</b> 以下</div>
+      <div class="dmg">
+        <span>邻居损伤</span>
+        <div class="dmgbar"><i id="dmgBar"></i></div>
+      </div>
+    </div>
+
+    <div id="tnt">
+      <span>炸药</span>
+      <div id="dots"></div>
+    </div>
+
+    <div id="hint">点楼体，安放炸药</div>
+
+    <button id="boomBtn" disabled>引 爆</button>
+
+    <div id="toast"></div>
+
+    <div id="overlay" class="show">
+      <div class="title-card">
+        <p class="eyebrow">DEMOLITION MASTER</p>
+        <h1>拆楼大师</h1>
+        <p class="sub">炸药是有限的，邻居就在隔壁。</p>
+        <div class="rules">
+          <div><b>01</b><span>点楼体放炸药，一颗大约炸穿三层</span></div>
+          <div><b>02</b><span>点「引爆」或按空格，一次全炸掉</span></div>
+          <div><b>03</b><span>把楼压到红线以下。震坏邻居家，算你的</span></div>
+        </div>
+        <p class="warn">拆得少不如拆得准。同样的炸药，位置差一格，结果差一层。</p>
+        <button id="startBtn" class="primary">开工</button>
+      </div>
+    </div>
+
+    <div id="rotate">请横屏，楼比较宽</div>
+  </div>
+</div>
+<script>
+'use strict';
+
+(function () {
+  var TUNE = { horiz: 560, lift: 150, gFric: 0.93, scatter: 210, blastR: 100, blastDmg: 92 };
+
+  var W = 1000, H = 640;
+  var GROUND = 566;
+  var CW = 42, CH = 28;
+  var GRAV = 1620;
+
+  var canvas = document.getElementById('c');
+  var ctx = canvas.getContext('2d');
+  var stage = document.getElementById('stage');
+  var $ = function (id) { return document.getElementById(id); };
+
+  var ui = {
+    lvName: $('lvName'), lvSub: $('lvSub'), obj: $('obj'),
+    dmgBar: $('dmgBar'), dots: $('dots'), hint: $('hint'),
+    boomBtn: $('boomBtn'), toast: $('toast'), overlay: $('overlay')
+  };
+
+  /* ================= 材质 ================= */
+
+  var MAT = {
+    w: { name: '砖',     hp: 22, mass: 1.00, fill: '#B5896B', edge: '#8E6A52', dark: '#7E5D47', dust: '#C9A78F' },
+    c: { name: '混凝土', hp: 32, mass: 1.20, fill: '#A9AFB4', edge: '#83898E', dark: '#71777C', dust: '#C3C8CC' },
+    g: { name: '玻璃',   hp: 5,  mass: 0.32, fill: '#7FA0B2', edge: '#3C525E', dark: '#5A7C90', dust: '#CFE2EC' },
+    s: { name: '钢梁',   hp: 62, mass: 1.85, fill: '#6C7276', edge: '#4A4F53', dark: '#41464A', dust: '#9BA1A5' }
+  };
+
+  /* ================= 关卡 ================= */
+
+  var LEVELS = [
+    {
+      name: '第一拆',
+      site: '老纺织厂 · 六层砖混',
+      charges: 3,
+      clearFloors: 3,
+      house: 'right',
+      houseX: 604,
+      bx: 250,
+      grid: [
+        'wwwww',
+        'wgggw',
+        'wwwww',
+        'wgggw',
+        'wwwww',
+        'wwwww'
+      ]
+    },
+    {
+      name: '第二拆',
+      site: '筒子楼 · 八层框架',
+      charges: 4,
+      clearFloors: 4,
+      house: 'left',
+      houseX: 148,
+      bx: 430,
+      grid: [
+        'sgggs',
+        'sgggs',
+        'sssss',
+        'sgggs',
+        'sgggs',
+        'sssss',
+        'sgggs',
+        'sssss'
+      ]
+    },
+    {
+      name: '第三拆',
+      site: 'L 形办公楼 · 七层',
+      charges: 5,
+      clearFloors: 4,
+      house: 'right',
+      houseX: 616,
+      bx: 186,
+      grid: [
+        'cccc...',
+        'cggc...',
+        'ccccccc',
+        'cggcggc',
+        'ccccccc',
+        'cggcggc',
+        'ccccccc'
+      ]
+    },
+    {
+      name: '第四拆',
+      site: '钟楼公寓 · 九层',
+      charges: 9,
+      clearFloors: 5,
+      house: 'right',
+      houseX: 742,
+      bx: 236,
+      grid: [
+        'sssssss',
+        'sgssgsg',
+        'sssssss',
+        'sggssgg',
+        'sssssss',
+        'sggssgg',
+        'sssssss',
+        'sggssgg',
+        'sssssss'
+      ]
+    }
+  ];
+
+  /* ================= 状态 ================= */
+
+  var G = {
+    mode: 'title',
+    level: 0,
+    L: null,
+    t: 0,
+    bx: 0, bw: 0, bh: 0,
+    limitH: 84,
+    bodies: [],
+    chargesLeft: 0,
+    placed: 0,
+    house: null,
+    houseDamage: 0,
+    fx: [],
+    rings: [],
+    shake: 0,
+    hover: null,
+    boomQueue: [],
+    boomIdx: 0,
+    boomT: 0,
+    settleT: 0,
+    stillT: 0,
+    toastT: 0,
+    result: null,
+    mouse: { x: -1, y: -1, in: false }
+  };
+
+  /* ================= 声音 ================= */
+
+  var actx = null, muted = false, noiseBuf = null;
+
+  function ac() {
+    if (!actx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      actx = new AC();
+    }
+    return actx;
+  }
+
+  function noise(a) {
+    if (!noiseBuf) {
+      var len = Math.floor(a.sampleRate * 1.2);
+      noiseBuf = a.createBuffer(1, len, a.sampleRate);
+      var d = noiseBuf.getChannelData(0);
+      for (var i = 0; i < len; i++) {
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.6);
+      }
+    }
+    var src = a.createBufferSource();
+    src.buffer = noiseBuf;
+    return src;
+  }
+
+  function boomSound() {
+    if (muted) return;
+    try {
+      var a = ac(); if (!a) return;
+      if (a.state === 'suspended') a.resume();
+
+      var src = noise(a);
+      var f = a.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(1400, a.currentTime);
+      f.frequency.exponentialRampToValueAtTime(180, a.currentTime + 0.5);
+      var g = a.createGain();
+      g.gain.setValueAtTime(0.5, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.75);
+      src.connect(f); f.connect(g); g.connect(a.destination);
+      src.start();
+
+      var o = a.createOscillator(), og = a.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(96, a.currentTime);
+      o.frequency.exponentialRampToValueAtTime(34, a.currentTime + 0.42);
+      og.gain.setValueAtTime(0.42, a.currentTime);
+      og.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.55);
+      o.connect(og); og.connect(a.destination);
+      o.start(); o.stop(a.currentTime + 0.6);
+    } catch (e) { /* 哑炮 */ }
+  }
+
+  function blip(freq, dur, vol, type) {
+    if (muted) return;
+    try {
+      var a = ac(); if (!a) return;
+      if (a.state === 'suspended') a.resume();
+      var o = a.createOscillator(), g = a.createGain();
+      o.type = type || 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, a.currentTime);
+      g.gain.linearRampToValueAtTime(vol, a.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+      o.connect(g); g.connect(a.destination);
+      o.start(); o.stop(a.currentTime + dur + 0.03);
+    } catch (e) { /* 静音也是一种选择 */ }
+  }
+
+  function glassSound() {
+    if (muted) return;
+    try {
+      var a = ac(); if (!a) return;
+      var src = noise(a);
+      var f = a.createBiquadFilter();
+      f.type = 'highpass';
+      f.frequency.value = 2600;
+      var g = a.createGain();
+      g.gain.setValueAtTime(0.14, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.28);
+      src.connect(f); f.connect(g); g.connect(a.destination);
+      src.start();
+    } catch (e) { /* 无所谓 */ }
+  }
+
+  /* ================= 构建 ================= */
+
+  function makeBody(x, y, w, h, key, staticBody) {
+    var m = MAT[key] || MAT.c;
+    return {
+      x: x, y: y, w: w, h: h,
+      vx: 0, vy: 0,
+      tilt: 0, spin: 0,
+      mass: m.mass,
+      mat: key,
+      hp: m.hp,
+      dmg: 0,
+      dead: false,
+      static: !!staticBody,
+      house: false,
+      charge: false,
+      hit: 0
+    };
+  }
+
+  function buildBuilding(L) {
+    var rows = L.grid.length;
+    var cols = 0;
+    for (var i = 0; i < rows; i++) cols = Math.max(cols, L.grid[i].length);
+
+    var bw = cols * CW, bh = rows * CH;
+    var by = GROUND - bh;
+    G.bx = L.bx; G.bw = bw; G.bh = bh;
+
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var ch = L.grid[r].charAt(c);
+        if (!ch || ch === '.' || !MAT[ch]) continue;
+        var b = makeBody(L.bx + c * CW, by + r * CH, CW, CH, ch, false);
+        b.tilt = (Math.random() - 0.5) * 0.012;
+        G.bodies.push(b);
+      }
+    }
+  }
+
+  function buildHouse(L) {
+    if (L.house === 'none') { G.house = null; return; }
+
+    var hw = 168;
+    var hx = L.houseX;
+    var bodyTop = GROUND - 96;
+
+    G.house = { x: hx, w: hw, side: L.house, top: bodyTop - 54, hurtFlash: 0 };
+
+    var wall = makeBody(hx, bodyTop, hw, 96, 'w', true);
+    wall.house = true;
+    wall.hp = 1e9;
+    G.bodies.push(wall);
+
+    var roof = makeBody(hx + 34, bodyTop - 48, hw - 68, 48, 'w', true);
+    roof.house = true;
+    roof.hp = 1e9;
+    G.bodies.push(roof);
+  }
+
+  function loadLevel(idx) {
+    G.level = idx;
+    var L = LEVELS[idx];
+    G.L = L;
+    G.bodies = [];
+    G.fx = [];
+    G.rings = [];
+    G.houseDamage = 0;
+    G.chargesLeft = L.charges;
+    G.placed = 0;
+    G.shake = 0;
+    G.hover = null;
+    G.boomQueue = [];
+    G.boomIdx = 0;
+    G.boomT = 0;
+    G.settleT = 0;
+    G.stillT = 0;
+    G.limitH = L.clearFloors * CH;
+
+    buildHouse(L);
+    buildBuilding(L);
+
+    ui.lvName.textContent = L.name;
+    ui.lvSub.textContent = L.site;
+    ui.obj.innerHTML = '把楼体压到红线（<b>' + L.clearFloors + ' 层</b>）以下';
+
+    renderDots();
+    setMode('place');
+  }
+
+  /* ================= 界面 ================= */
+
+  function renderDots() {
+    var html = '';
+    for (var i = 0; i < G.L.charges; i++) {
+      html += '<i class="' + (i < G.chargesLeft ? '' : 'used') + '"></i>';
+    }
+    ui.dots.innerHTML = html;
+  }
+
+  function setMode(m) {
+    G.mode = m;
+    var hints = {
+      place: '点楼体安放炸药 · 分散开，别扎堆',
+      ready: '按空格，或者点「引爆」',
+      boom: '……',
+      settle: '……',
+      clear: '',
+      fail: ''
+    };
+    ui.hint.textContent = hints[m] || '';
+    ui.hint.classList.toggle('live', m === 'ready' || m === 'boom');
+    ui.boomBtn.disabled = !(m === 'place' && G.placed > 0);
+    ui.boomBtn.textContent = m === 'boom' ? '引 爆中' : '引 爆';
+  }
+
+  function toast(msg) {
+    ui.toast.textContent = msg;
+    ui.toast.classList.add('on');
+    clearTimeout(G.toastT);
+    G.toastT = setTimeout(function () { ui.toast.classList.remove('on'); }, 2000);
+  }
+
+  function syncDamage() {
+    var p = Math.min(100, G.houseDamage);
+    ui.dmgBar.style.width = p + '%';
+    ui.dmgBar.className = p > 66 ? 'bad' : (p > 33 ? 'warn' : '');
+  }
+
+  function hurtHouse(speed, mass) {
+    if (G.houseDamage >= 100) return;
+    G.houseDamage += (speed - 140) * 0.024 * mass;
+    if (G.house) G.house.hurtFlash = 1;
+    syncDamage();
+  }
+
+  /* ================= 物理 ================= */
+
+  function wakeAll() {
+    /* 只需保证排序与重力生效；我们不做休眠，靠阻尼收敛 */
+  }
+
+  function sortBodies() {
+    G.bodies.sort(function (a, b) { return a.x - b.x; });
+  }
+
+  function substep(h) {
+    var arr = G.bodies, i, b;
+
+    for (i = 0; i < arr.length; i++) {
+      b = arr[i];
+      if (b.static) continue;
+      b.vy += GRAV * h;
+      if (b.vy > 2000) b.vy = 2000;
+      b.x += b.vx * h;
+      b.y += b.vy * h;
+      b.vx *= 1 - Math.min(0.5, 1.9 * h);
+      b.tilt += b.spin * h;
+      b.spin *= 1 - Math.min(0.5, 2.6 * h);
+      if (b.tilt > 0.42) b.tilt = 0.42;
+      if (b.tilt < -0.42) b.tilt = -0.42;
+      b.hit = Math.max(0, b.hit - h * 4);
+    }
+
+    /* 地面 */
+    for (i = 0; i < arr.length; i++) {
+      b = arr[i];
+      if (b.static) continue;
+      if (b.y + b.h > GROUND) {
+        var impact = b.vy;
+        b.y = GROUND - b.h;
+        if (impact > 0) {
+          if (impact > 460) {
+            addDust(b.x + b.w / 2, GROUND - 4, 3, 60, MAT[b.mat].dust);
+            b.vx += (Math.random() - 0.5) * TUNE.scatter;
+            G.shake = Math.min(14, G.shake + 1.1);
+          }
+          b.vy = 0;
+        }
+        b.vx *= TUNE.gFric;
+        b.tilt *= 0.90;
+      }
+      if (b.x < -260 || b.x > W + 260) { b.dead = true; }
+    }
+
+    /* 成对碰撞（按 x 扫描） */
+    for (i = 0; i < arr.length; i++) {
+      var a = arr[i];
+      if (a.dead) continue;
+      for (var j = i + 1; j < arr.length; j++) {
+        var c = arr[j];
+        if (c.dead) continue;
+        if (c.x >= a.x + a.w) break;
+
+        var ox = Math.min(a.x + a.w, c.x + c.w) - Math.max(a.x, c.x);
+        if (ox <= 0.02) continue;
+        var oy = Math.min(a.y + a.h, c.y + c.h) - Math.max(a.y, c.y);
+        if (oy <= 0.02) continue;
+
+        var ma = a.static ? 1e6 : a.mass;
+        var mc = c.static ? 1e6 : c.mass;
+        var tot = ma + mc;
+
+        /* 边缘接触（重心悬空）不构成支撑，改为横向滑落 */
+        var minW = Math.min(a.w, c.w);
+        var ratio = ox / minW;
+        var vertical = ox >= oy;
+        if (ratio < 0.56) vertical = false;
+
+        if (!vertical) {
+          /* 横向分离 */
+          var dir = (a.x + a.w * 0.5 < c.x + c.w * 0.5) ? -1 : 1;
+          var ca = ox * 0.55;
+          if (!a.static) a.x += dir * ca * (mc / tot);
+          if (!c.static) c.x -= dir * ca * (ma / tot);
+
+          var rel = (c.vx - a.vx) * dir;
+          if (rel < 0) {
+            var sideSpeed = -rel;
+            if (a.house && !c.static && sideSpeed > 150) hurtHouse(sideSpeed, c.mass);
+            if (c.house && !a.static && sideSpeed > 150) hurtHouse(sideSpeed, a.mass);
+            var imp = -rel * 0.55;
+            if (!a.static) a.vx -= dir * imp * (mc / tot);
+            if (!c.static) c.vx += dir * imp * (ma / tot);
+          }
+          if (!a.static) { a.vx *= 0.985; }
+          if (!c.static) { c.vx *= 0.985; }
+        } else {
+          /* 纵向：上方让位 */
+          var aAbove = (a.y + a.h * 0.5) < (c.y + c.h * 0.5);
+          var up = aAbove ? a : c;
+          var dn = aAbove ? c : a;
+
+          var corr = oy * 0.62;
+          if (!up.static) {
+            up.y -= corr;
+            var impactV = up.vy;
+            if (impactV > 0) {
+              if (impactV > 430 && up.hit <= 0) {
+                up.hit = 1;
+                if (up.mat === 'g') glassSound();
+                else if (Math.random() < 0.5) blip(120 + Math.random() * 60, 0.06, 0.02, 'triangle');
+                if (impactV > 700) addDust(up.x + up.w / 2, up.y + up.h, 2, 50, MAT[up.mat].dust);
+                /* 砸得越狠，结构越松 */
+                if (impactV > 620) {
+                  up.dmg += (impactV - 620) * 0.052 * (2 - up.mass);
+                  if (up.dmg >= up.hp) destroyBlock(up);
+                }
+              }
+              if (!dn.static && !dn.house) {
+                dn.vy += impactV * 0.30 * (up.mass / (up.mass + dn.mass));
+              }
+              if (dn.house && impactV > 150) hurtHouse(impactV, up.mass);
+              up.vy = 0;
+            }
+            up.vx *= 0.93;
+            up.spin *= 0.86;
+          }
+        }
+      }
+    }
+  }
+
+  function physics(dt) {
+    var steps = 3;
+    var h = dt / steps;
+    for (var i = 0; i < steps; i++) substep(h);
+    G.bodies = G.bodies.filter(function (b) { return !b.dead; });
+  }
+
+  /* ================= 爆破 ================= */
+
+  function addDust(x, y, n, spread, color) {
+    for (var i = 0; i < n; i++) {
+      G.fx.push({
+        x: x, y: y,
+        vx: (Math.random() - 0.5) * spread,
+        vy: -Math.random() * spread * 0.8 - 20,
+        life: 0,
+        max: 0.5 + Math.random() * 0.9,
+        r: 2 + Math.random() * 5,
+        color: color || '#C3C8CC',
+        kind: 'dust'
+      });
+    }
+  }
+
+  function addSpark(x, y, color) {
+    G.fx.push({
+      x: x, y: y,
+      vx: (Math.random() - 0.5) * 520,
+      vy: -Math.random() * 420 - 60,
+      life: 0,
+      max: 0.3 + Math.random() * 0.45,
+      r: 1.2 + Math.random() * 1.8,
+      color: color || '#FFC93C',
+      kind: 'spark'
+    });
+  }
+
+  function blast(cx, cy) {
+    var R = TUNE.blastR;
+
+    G.shake = Math.min(18, G.shake + 9);
+    boomSound();
+
+    G.rings.push({ x: cx, y: cy, r: 12, life: 0, max: 0.55 });
+
+    for (var i = 0; i < 22; i++) addSpark(cx, cy, i % 3 === 0 ? '#FFF3C4' : '#FF8A3D');
+    addDust(cx, cy, 14, 220, '#B9BEC1');
+
+    var snapshot = G.bodies.slice();
+    for (var k = 0; k < snapshot.length; k++) {
+      var b = snapshot[k];
+      if (b.static) continue;
+
+      var bx = b.x + b.w / 2, by = b.y + b.h / 2;
+      var dx = bx - cx, dy = by - cy;
+      var d = Math.sqrt(dx * dx + dy * dy) || 0.001;
+
+      /* 伤害（已装药的块交给它自己那颗） */
+      if (b.charge) continue;
+      if (d < R) {
+        var dmg = TUNE.blastDmg * Math.pow(1 - d / R, 1.6);
+        b.dmg += dmg;
+      }
+
+      /* 冲击 */
+      if (d < R * 1.7) {
+        var f = Math.max(0, 1 - d / (R * 1.7));
+        var nx = dx / d, ny = dy / d;
+        if (d < 2) { nx = (Math.random() - 0.5); ny = -1; }
+        b.vx += nx * TUNE.horiz * f;
+        b.vy += ny * TUNE.horiz * 0.68 * f - TUNE.lift * f;
+        b.spin += (Math.random() - 0.5) * 7 * f;
+        b.tilt += (Math.random() - 0.5) * 0.1 * f;
+      }
+    }
+
+    /* 冲击波震到邻居家 */
+    if (G.house) {
+      var hx0 = G.house.x, hx1 = G.house.x + G.house.w;
+      var hy0 = G.house.top, hy1 = GROUND;
+      var qx = Math.max(hx0 - cx, 0, cx - hx1);
+      var qy = Math.max(hy0 - cy, 0, cy - hy1);
+      var dh = Math.sqrt(qx * qx + qy * qy);
+      if (dh < 155) hurtHouse(300 + (155 - dh) * 3, 1.2);
+    }
+
+    /* 结算伤害 */
+    var dead = [];
+    for (var m = 0; m < G.bodies.length; m++) {
+      var bb = G.bodies[m];
+      if (bb.static) continue;
+      if (bb.dmg >= bb.hp) dead.push(bb);
+    }
+    for (var n = 0; n < dead.length; n++) destroyBlock(dead[n]);
+  }
+
+  function destroyBlock(b) {
+    if (b.dead) return;
+    b.dead = true;
+    var m = MAT[b.mat];
+    var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+
+    for (var i = 0; i < 5; i++) {
+      G.fx.push({
+        x: cx + (Math.random() - 0.5) * b.w,
+        y: cy + (Math.random() - 0.5) * b.h,
+        vx: (Math.random() - 0.5) * 420,
+        vy: -Math.random() * 380 - 40,
+        life: 0,
+        max: 0.8 + Math.random() * 0.8,
+        r: 3 + Math.random() * 7,
+        color: i % 2 ? m.fill : m.dark,
+        kind: 'chunk'
+      });
+    }
+    addDust(cx, cy, 4, 130, m.dust);
+    if (b.mat === 'g') glassSound();
+  }
+
+  /* ================= 交互 ================= */
+
+  function pickBlock(x, y) {
+    for (var i = G.bodies.length - 1; i >= 0; i--) {
+      var b = G.bodies[i];
+      if (b.static || b.dead) continue;
+      if (b.tilt) {
+        /* 倾斜块的命中判定放宽一点 */
+        if (x >= b.x - 4 && x <= b.x + b.w + 4 && y >= b.y - 4 && y <= b.y + b.h + 4) return b;
+      } else if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+        return b;
+      }
+    }
+    return null;
+  }
+
+  function toggleCharge(b) {
+    if (!b) return;
+    if (b.charge) {
+      b.charge = false;
+      G.chargesLeft++;
+      G.placed--;
+      blip(300, 0.05, 0.025, 'square');
+    } else {
+      if (G.chargesLeft <= 0) { toast('炸药不够了。'); return; }
+      b.charge = true;
+      G.chargesLeft--;
+      G.placed++;
+      blip(660, 0.05, 0.03, 'square');
+    }
+    renderDots();
+    setMode(G.placed > 0 ? 'ready' : 'place');
+  }
+
+  function detonate() {
+    if (G.mode !== 'place' && G.mode !== 'ready') return;
+    var charged = [];
+    for (var i = 0; i < G.bodies.length; i++) {
+      if (G.bodies[i].charge && !G.bodies[i].dead) charged.push(G.bodies[i]);
+    }
+    if (!charged.length) return;
+
+    G.boomQueue = charged.map(function (b, i) {
+      return { b: b, x: b.x + b.w / 2, y: b.y + b.h / 2, t: i * 0.07 };
+    });
+    G.boomIdx = 0;
+    G.boomT = 0;
+    G.settleT = 0;
+    G.stillT = 0;
+    setMode('boom');
+  }
+
+  /* ================= 结算 ================= */
+
+  function measure() {
+    var top = GROUND;
+    var alive = 0;
+    for (var i = 0; i < G.bodies.length; i++) {
+      var b = G.bodies[i];
+      if (b.static) continue;
+      alive++;
+      var cx = b.x + b.w / 2;
+      if (cx > G.bx - 26 && cx < G.bx + G.bw + 26) {
+        if (b.y < top) top = b.y;
+      }
+    }
+    return { top: top, pileH: Math.max(0, GROUND - top), alive: alive };
+  }
+
+  function evaluate() {
+    var m = measure();
+    G.result = m;
+
+    if (G.houseDamage >= 100) {
+      return endLevel(false, '你把邻居家也拆了。', m);
+    }
+    if (m.pileH <= G.limitH) {
+      return endLevel(true, '', m);
+    }
+    if (G.chargesLeft <= 0) {
+      var lack = Math.ceil((m.pileH - G.limitH) / CH);
+      return endLevel(false, '还高着 ' + lack + ' 层。炸药用完了。', m);
+    }
+    /* 继续拆 */
+    G.placed = 0;
+    setMode('place');
+    if (m.pileH - G.limitH < CH * 1.5) toast('快了，还差一点。');
+  }
+
+  function starsFor(m) {
+    var target = G.L.clearFloors;
+    var over = m.pileH / CH;
+    var s = 1;
+    if (over <= target - 1) s = 2;
+    if (over <= target - 2) s = 3;
+    if (G.houseDamage > 40 && s > 1) s--;
+    return s;
+  }
+
+  function endLevel(win, why, m) {
+    setMode(win ? 'clear' : 'fail');
+
+    G.progress = G.progress || {};
+    if (win) G.progress[G.level] = starsFor(m);
+
+    var stars = win ? starsFor(m) : 0;
+    var starHtml = '';
+    for (var i = 0; i < 3; i++) starHtml += '<i class="' + (i < stars ? 'on' : '') + '">★</i>';
+
+    var isLast = G.level >= LEVELS.length - 1;
+    var title = win ? (isLast ? '全城最会拆楼的人' : '拆平了') : '没拆干净';
+    var sub = win
+      ? (isLast ? '这片街区以后归你管。' : '监理点了点头。')
+      : (why || '楼还站着。');
+
+    var btn = win
+      ? (isLast
+          ? '<button class="primary" id="againBtn">再拆一遍</button>'
+          : '<button class="primary" id="nextBtn">下一栋</button>')
+      : '<button class="primary" id="retryBtn">再来一次</button>';
+
+    ui.overlay.innerHTML =
+      '<div class="card">' +
+        '<p class="eyebrow">' + (win ? 'DEMOLITION COMPLETE' : 'DEMOLITION FAILED') + '</p>' +
+        '<h2 class="' + (win ? 'good' : 'bad') + '">' + title + '</h2>' +
+        '<p class="why">' + sub + '</p>' +
+        (win ? '<div class="stars">' + starHtml + '</div>' : '') +
+        '<div class="grid">' +
+          '<div><b>' + (m.pileH / CH).toFixed(1) + '</b><span>剩余层数</span></div>' +
+          '<div><b>' + G.chargesLeft + '</b><span>剩余炸药</span></div>' +
+          '<div><b>' + Math.round(Math.min(100, G.houseDamage)) + '</b><span>邻居损伤</span></div>' +
+        '</div>' +
+        '<div class="row-btn">' + btn +
+          '<button class="ghost" id="resetLvBtn">重拆本栋</button>' +
+        '</div>' +
+      '</div>';
+
+    ui.overlay.classList.add('show');
+
+    var next = $('nextBtn');
+    if (next) next.addEventListener('click', function () {
+      ui.overlay.classList.remove('show');
+      loadLevel(G.level + 1);
+    });
+
+    var retry = $('retryBtn');
+    if (retry) retry.addEventListener('click', function () {
+      ui.overlay.classList.remove('show');
+      loadLevel(G.level);
+    });
+
+    var again = $('againBtn');
+    if (again) again.addEventListener('click', function () {
+      ui.overlay.classList.remove('show');
+      loadLevel(0);
+    });
+
+    $('resetLvBtn').addEventListener('click', function () {
+      ui.overlay.classList.remove('show');
+      loadLevel(G.level);
+    });
+  }
+
+  /* ================= 绘制 ================= */
+
+  function drawSky() {
+    var g = ctx.createLinearGradient(0, 0, 0, GROUND);
+    g.addColorStop(0, '#141A21');
+    g.addColorStop(0.42, '#25303A');
+    g.addColorStop(0.74, '#3D4C55');
+    g.addColorStop(1, '#5D6B70');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, GROUND);
+
+    /* 低垂的太阳 */
+    var sx = 790, sy = 430;
+    var r = ctx.createRadialGradient(sx, sy, 0, sx, sy, 240);
+    r.addColorStop(0, 'rgba(255,196,120,0.20)');
+    r.addColorStop(1, 'rgba(255,196,120,0)');
+    ctx.fillStyle = r;
+    ctx.fillRect(sx - 240, sy - 240, 480, 480);
+
+    ctx.beginPath();
+    ctx.arc(sx, sy, 30, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,214,160,0.45)';
+    ctx.fill();
+  }
+
+  function drawSkyline() {
+    var base = GROUND - 6;
+    ctx.fillStyle = 'rgba(18,24,29,0.55)';
+    var xs = [0, 62, 118, 190, 250, 320, 372, 430, 492, 548, 610, 668, 726, 790, 850, 910, 968, 1000];
+    var hs = [120, 168, 96, 210, 140, 250, 118, 188, 96, 232, 150, 200, 110, 176, 130, 214, 104, 160];
+    for (var i = 0; i < xs.length; i++) {
+      var w = (i === xs.length - 1) ? 40 : (xs[i + 1] - xs[i] - 6);
+      ctx.fillRect(xs[i], base - hs[i], w, hs[i]);
+    }
+
+    /* 塔吊 */
+    ctx.strokeStyle = 'rgba(20,26,31,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(880, base);
+    ctx.lineTo(880, base - 300);
+    ctx.moveTo(820, base - 292);
+    ctx.lineTo(968, base - 292);
+    ctx.moveTo(880, base - 300);
+    ctx.lineTo(930, base - 292);
+    ctx.stroke();
+  }
+
+  function drawGround() {
+    var g = ctx.createLinearGradient(0, GROUND, 0, H);
+    g.addColorStop(0, '#2B3035');
+    g.addColorStop(1, '#1A1E22');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, GROUND, W, H - GROUND);
+
+    /* 路缘 */
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(0, GROUND, W, 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, GROUND + 2, W, 3);
+
+    /* 工区警示斜纹 */
+    var x0 = G.bx - 44, x1 = G.bx + G.bw + 44;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, GROUND + 8, x1 - x0, 10);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(255,201,60,0.20)';
+    ctx.fillRect(x0, GROUND + 8, x1 - x0, 10);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 7;
+    for (var i = -20; i < 60; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x0 + i * 16, GROUND + 18);
+      ctx.lineTo(x0 + i * 16 + 16, GROUND + 8);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    /* 地面碎石 */
+    ctx.fillStyle = 'rgba(255,255,255,0.045)';
+    for (var k = 0; k < 40; k++) {
+      var px = (k * 137.5) % W;
+      var py = GROUND + 26 + ((k * 53) % 44);
+      ctx.fillRect(px, py, 3 + (k % 4), 2);
+    }
+  }
+
+  function drawHouse() {
+    var h = G.house;
+    if (!h) return;
+    var x = h.x, w = h.w;
+    var bodyTop = GROUND - 96;
+
+    /* 草坪 */
+    ctx.fillStyle = 'rgba(96,150,110,0.16)';
+    ctx.fillRect(x - 16, GROUND - 8, w + 32, 10);
+
+    /* 烟囱 */
+    ctx.fillStyle = '#8E6A52';
+    ctx.fillRect(x + w - 52, bodyTop - 82, 18, 42);
+    ctx.fillStyle = '#7A5944';
+    ctx.fillRect(x + w - 52, bodyTop - 82, 18, 5);
+
+    /* 墙体 */
+    ctx.fillStyle = '#C3B39C';
+    ctx.fillRect(x, bodyTop, w, 96);
+    ctx.fillStyle = 'rgba(0,0,0,0.10)';
+    ctx.fillRect(x, bodyTop + 60, w, 36);
+
+    /* 屋顶 */
+    ctx.beginPath();
+    ctx.moveTo(x - 14, bodyTop + 2);
+    ctx.lineTo(x + w / 2, bodyTop - 54);
+    ctx.lineTo(x + w + 14, bodyTop + 2);
+    ctx.closePath();
+    ctx.fillStyle = '#8B5344';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    /* 门 */
+    ctx.fillStyle = '#6E4B3A';
+    ctx.fillRect(x + w / 2 - 15, GROUND - 48, 30, 48);
+    ctx.fillStyle = 'rgba(255,201,60,0.6)';
+    ctx.beginPath();
+    ctx.arc(x + w / 2 + 9, GROUND - 24, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    /* 窗 */
+    var lit = 1 - Math.min(1, G.houseDamage / 100) * 0.55;
+    var wins = [[x + 24, bodyTop + 26], [x + w - 62, bodyTop + 26]];
+    for (var i = 0; i < wins.length; i++) {
+      ctx.fillStyle = 'rgba(255,205,120,' + (0.72 * lit).toFixed(2) + ')';
+      ctx.fillRect(wins[i][0], wins[i][1], 38, 30);
+      ctx.strokeStyle = '#8B6F58';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(wins[i][0], wins[i][1], 38, 30);
+      ctx.beginPath();
+      ctx.moveTo(wins[i][0] + 19, wins[i][1]);
+      ctx.lineTo(wins[i][0] + 19, wins[i][1] + 30);
+      ctx.moveTo(wins[i][0], wins[i][1] + 15);
+      ctx.lineTo(wins[i][0] + 38, wins[i][1] + 15);
+      ctx.stroke();
+    }
+
+    /* 损伤裂纹 */
+    var n = Math.floor(G.houseDamage / 22);
+    ctx.strokeStyle = 'rgba(30,20,16,0.55)';
+    ctx.lineWidth = 1.4;
+    for (var c = 0; c < n && c < 6; c++) {
+      var seed = c * 37.7;
+      var cx0 = x + 20 + ((seed * 13) % (w - 40));
+      var cy0 = bodyTop + 10 + ((seed * 7) % 70);
+      ctx.beginPath();
+      ctx.moveTo(cx0, cy0);
+      var px = cx0, py = cy0;
+      for (var s = 0; s < 4; s++) {
+        px += ((seed * (s + 3)) % 18) - 9;
+        py += 8 + ((seed * (s + 5)) % 8);
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    /* 被砸中的闪红 */
+    if (h.hurtFlash > 0) {
+      ctx.fillStyle = 'rgba(255,80,40,' + (0.22 * h.hurtFlash).toFixed(3) + ')';
+      ctx.fillRect(x - 14, bodyTop - 54, w + 28, 150);
+    }
+
+    /* 门口的牌子 */
+    ctx.fillStyle = 'rgba(20,26,30,0.85)';
+    ctx.fillRect(x + w / 2 - 34, GROUND - 12, 68, 15);
+    ctx.fillStyle = 'rgba(255,201,60,0.9)';
+    ctx.font = '9px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('邻居 · 请勿靠近', x + w / 2, GROUND - 1.5);
+  }
+
+  function drawTargetLine() {
+    var y = GROUND - G.limitH;
+    ctx.save();
+    ctx.setLineDash([9, 7]);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = 'rgba(255,90,60,0.62)';
+    ctx.beginPath();
+    ctx.moveTo(24, y);
+    ctx.lineTo(W - 24, y);
+    ctx.stroke();
+    ctx.restore();
+
+    /* 右端标签 */
+    ctx.font = '10px -apple-system,sans-serif';
+    var label = '红线 · 拆到这以下';
+    var lw = ctx.measureText(label).width + 16;
+    ctx.fillStyle = 'rgba(18,14,12,0.82)';
+    ctx.fillRect(W - 26 - lw, y - 22, lw, 16);
+    ctx.fillStyle = 'rgba(255,110,70,0.95)';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, W - 26 - lw / 2 + 8, y - 10.5);
+  }
+
+  function drawBody(b) {
+    var m = MAT[b.mat];
+    var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (b.tilt) ctx.rotate(b.tilt);
+    ctx.translate(-b.w / 2, -b.h / 2);
+
+    if (b.mat === 'g') {
+      ctx.fillStyle = m.fill;
+      ctx.fillRect(0, 0, b.w, b.h);
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.fillRect(3, 3, b.w - 6, 7);
+      ctx.strokeStyle = m.edge;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(1.5, 1.5, b.w - 3, b.h - 3);
+    } else if (b.mat === 's') {
+      ctx.fillStyle = m.fill;
+      ctx.fillRect(0, 0, b.w, b.h);
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(0, 0, b.w, 3);
+      ctx.fillStyle = m.edge;
+      ctx.fillRect(0, b.h - 4, b.w, 4);
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      for (var r = 0; r < 3; r++) {
+        ctx.beginPath();
+        ctx.arc(9 + r * 12, b.h / 2, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      ctx.fillStyle = m.fill;
+      ctx.fillRect(0, 0, b.w, b.h);
+      /* 砖缝 */
+      ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, b.h / 2);
+      ctx.lineTo(b.w, b.h / 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.09)';
+      ctx.fillRect(0, 0, b.w, 2);
+      ctx.fillStyle = m.edge;
+      ctx.fillRect(0, b.h - 2, b.w, 2);
+    }
+
+    /* 边框 */
+    ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, b.w - 1, b.h - 1);
+
+    /* 挨过炸的痕迹 */
+    if (b.dmg > 0 && b.hp > b.dmg) {
+      var k = Math.min(0.55, b.dmg / b.hp * 0.55);
+      ctx.fillStyle = 'rgba(28,20,16,' + k.toFixed(3) + ')';
+      ctx.fillRect(0, 0, b.w, b.h * Math.min(1, b.dmg / b.hp));
+    }
+
+    ctx.restore();
+
+    /* 炸药 */
+    if (b.charge) {
+      var pulse = 0.55 + Math.sin(G.t * 9) * 0.45;
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = '#FF6A1F';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.fillStyle = '#D93E12';
+      ctx.fillRect(cx - 6, cy - 9, 12, 18);
+      ctx.fillStyle = '#8E2A0C';
+      ctx.fillRect(cx - 6, cy - 9, 12, 3);
+      ctx.fillStyle = pulse > 0.7 ? '#FFF3C4' : '#FF9A5C';
+      ctx.beginPath();
+      ctx.arc(cx, cy - 3, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,150,90,0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + 9);
+      ctx.quadraticCurveTo(cx + 8, cy + 18, cx + 4, cy + 26);
+      ctx.stroke();
+    }
+  }
+
+  function drawBodies() {
+    var arr = G.bodies;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].static) continue;
+      drawBody(arr[i]);
+    }
+  }
+
+  function drawHover() {
+    if (G.mode !== 'place' && G.mode !== 'ready') return;
+    if (!G.mouse.in) return;
+    var b = pickBlock(G.mouse.x, G.mouse.y);
+    if (!b) return;
+
+    var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    var R = 58;
+
+    /* 会被炸穿的块 */
+    for (var i = 0; i < G.bodies.length; i++) {
+      var o = G.bodies[i];
+      if (o.static) continue;
+      var ox = o.x + o.w / 2, oy = o.y + o.h / 2;
+      if (Math.sqrt((ox - cx) * (ox - cx) + (oy - cy) * (oy - cy)) > R) continue;
+      ctx.save();
+      ctx.translate(ox, oy);
+      if (o.tilt) ctx.rotate(o.tilt);
+      ctx.fillStyle = o.charge ? 'rgba(255,106,31,0.30)' : 'rgba(255,106,31,0.17)';
+      ctx.fillRect(-o.w / 2 + 1, -o.h / 2 + 1, o.w - 2, o.h - 2);
+      ctx.restore();
+    }
+
+    /* 范围圈 */
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(255,106,31,0.55)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = b.charge ? 'rgba(255,106,31,0.95)' : 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+    ctx.restore();
+  }
+
+  function drawFX() {
+    for (var i = 0; i < G.rings.length; i++) {
+      var r = G.rings[i];
+      var k = r.life / r.max;
+      var rad = r.r + k * 120;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, rad, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,200,120,' + (0.55 * (1 - k)).toFixed(3) + ')';
+      ctx.lineWidth = 3 * (1 - k) + 0.5;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, rad * 0.55, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,150,70,' + (0.30 * (1 - k)).toFixed(3) + ')';
+      ctx.fill();
+    }
+
+    for (var j = 0; j < G.fx.length; j++) {
+      var p = G.fx[j];
+      var kk = p.life / p.max;
+      var a = 1 - kk;
+      if (p.kind === 'spark') {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = a;
+        ctx.fillRect(p.x, p.y, p.r, p.r * 1.6);
+        ctx.globalAlpha = 1;
+      } else if (p.kind === 'chunk') {
+        ctx.globalAlpha = Math.min(1, a * 2);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.r, p.r * 0.8);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.globalAlpha = a * 0.45;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (1 + kk * 1.8), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function drawVignette() {
+    var g = ctx.createRadialGradient(W / 2, H / 2, 240, W / 2, H / 2, 660);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function render() {
+    var sh = G.shake;
+    ctx.setTransform(render.dpr || 1, 0, 0, render.dpr || 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.save();
+    if (sh > 0.2) {
+      ctx.translate((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh);
+    }
+
+    drawSky();
+    drawSkyline();
+    drawGround();
+    drawHouse();
+    drawTargetLine();
+    drawBodies();
+    drawHover();
+    drawFX();
+
+    ctx.restore();
+    drawVignette();
+  }
+
+  /* ================= 更新 ================= */
+
+  function update(dt) {
+    G.t += dt;
+
+    if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 26);
+    if (G.house && G.house.hurtFlash > 0) G.house.hurtFlash = Math.max(0, G.house.hurtFlash - dt * 3);
+
+    /* 粒子 */
+    for (var i = G.fx.length - 1; i >= 0; i--) {
+      var p = G.fx[i];
+      p.life += dt;
+      if (p.life >= p.max) { G.fx.splice(i, 1); continue; }
+      p.vy += (p.kind === 'dust' ? -30 : 900) * dt;
+      if (p.kind === 'dust') p.vy *= 0.98;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.kind !== 'dust') {
+        if (p.y > GROUND - 2) { p.y = GROUND - 2; p.vy *= -0.32; p.vx *= 0.7; }
+      }
+      p.vx *= 1 - Math.min(0.5, 1.2 * dt);
+    }
+    for (var r = G.rings.length - 1; r >= 0; r--) {
+      G.rings[r].life += dt;
+      if (G.rings[r].life >= G.rings[r].max) G.rings.splice(r, 1);
+    }
+
+    if (G.mode === 'title') return;
+
+    if (G.mode === 'boom') {
+      G.boomT += dt;
+      while (G.boomIdx < G.boomQueue.length && G.boomT >= G.boomQueue[G.boomIdx].t) {
+        var q = G.boomQueue[G.boomIdx];
+        G.boomIdx++;
+        blast(q.x, q.y);
+        destroyBlock(q.b);
+      }
+      if (G.boomIdx >= G.boomQueue.length && G.boomT > 0.4) {
+        G.stillT = 0;
+        G.settleT = 0;
+        setMode('settle');
+      }
+    }
+
+    if (G.mode === 'boom' || G.mode === 'settle') {
+      sortBodies();
+      physics(dt);
+
+      if (G.mode === 'settle') {
+        G.settleT += dt;
+        var maxV = 0;
+        for (var b = 0; b < G.bodies.length; b++) {
+          var bb = G.bodies[b];
+          if (bb.static) continue;
+          var v = Math.abs(bb.vx) + Math.abs(bb.vy);
+          if (v > maxV) maxV = v;
+        }
+        if (maxV < 30) G.stillT += dt; else G.stillT = 0;
+        if ((G.stillT > 0.34 && G.settleT > 1.1) || G.settleT > 7) {
+          evaluate();
+        }
+      }
+    }
+  }
+
+  /* ================= 适配 ================= */
+
+  function fit() {
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.98;
+    stage.style.transform = 'scale(' + s.toFixed(4) + ')';
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    render.dpr = dpr;
+  }
+  window.addEventListener('resize', fit);
+
+  /* ================= 输入 ================= */
+
+  function toLocal(e) {
+    var r = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - r.left) / r.width * W,
+      y: (e.clientY - r.top) / r.height * H
+    };
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    if (G.mode !== 'place' && G.mode !== 'ready') return;
+    var p = toLocal(e);
+    var b = pickBlock(p.x, p.y);
+    if (!b) return;
+    toggleCharge(b);
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    var p = toLocal(e);
+    G.mouse.x = p.x;
+    G.mouse.y = p.y;
+    G.mouse.in = true;
+    canvas.style.cursor = (G.mode === 'place' && pickBlock(p.x, p.y)) ? 'crosshair' : 'default';
+  });
+
+  canvas.addEventListener('pointerleave', function () {
+    G.mouse.in = false;
+  });
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      if (G.mode === 'place' || G.mode === 'ready') detonate();
+    } else if (e.code === 'KeyR') {
+      if (G.mode !== 'title') loadLevel(G.level);
+    }
+  });
+
+  ui.boomBtn.addEventListener('click', detonate);
+
+  function startGame() {
+    ui.overlay.classList.remove('show');
+    loadLevel(0);
+    blip(220, 0.1, 0.04, 'triangle');
+  }
+
+  $('startBtn').addEventListener('click', startGame);
+
+  /* ================= 启动 ================= */
+
+  function init() {
+    fit();
+    loadLevel(0);
+    setMode('title');
+    ui.hint.textContent = '';
+    ui.boomBtn.disabled = true;
+
+    var last = 0;
+    function loop(ts) {
+      if (!last) last = ts;
+      var dt = (ts - last) / 1000;
+      last = ts;
+      if (dt > 0.05) dt = 0.05;
+      update(dt);
+      render();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  }
+
+  init();
+
+  /* 测试钩子 */
+  window.__DM = {
+    G: G,
+    LEVELS: LEVELS,
+    loadLevel: loadLevel,
+    detonate: detonate,
+    placeAt: function (x, y) { toggleCharge(pickBlock(x, y)); },
+    chargeBlock: toggleCharge,
+    step: update,
+    measure: measure,
+    bodies: function () { return G.bodies; },
+    TUNE: TUNE,
+    pick: pickBlock,
+    renderOne: render,
+    setMode: setMode
+  };
+})();
+</script>
+</body>
+</html>

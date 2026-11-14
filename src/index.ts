@@ -1,5 +1,6 @@
 import rhythmSnakeHtml from './games/rhythm-snake.html';
 import fishFishingYouHtml from './games/fish-fishing-you.html';
+import demolitionMasterHtml from './games/demolition-master.html';
 // 加新游戏：
 // import game3Html from './games/game-3.html';
 
@@ -15,6 +16,12 @@ const GAMES = [
     title: '鱼也在钓你 · THE FISH ARE FISHING YOU',
     desc: '你以为你在钓鱼，其实鱼在钓你。假口、耐心，与一个记得你的鱼塘',
     html: fishFishingYouHtml,
+  },
+  {
+    path: '/demolition-master',
+    title: '拆楼大师 · DEMOLITION MASTER',
+    desc: '炸药有限，邻居就在隔壁。放好炸药，把楼压到红线以下',
+    html: demolitionMasterHtml,
   },
   // { path: '/game-3', title: '...', desc: '...', html: game3Html },
 ];
