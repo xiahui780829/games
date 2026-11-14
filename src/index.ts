@@ -54,7 +54,7 @@ function renderHome() {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>games · 小游戏合集</title>
+<title>游戲 · 小游戏合集</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -81,7 +81,7 @@ function renderHome() {
 <body>
 <main>
   <h1>games</h1>
-  <p class="sub">small games made from AI</p>
+  <p class="sub">神秘小游戲</p>
   ${cards}
 </main>
 </body>
