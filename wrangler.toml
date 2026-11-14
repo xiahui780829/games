@@ -1,0 +1,9 @@
+name = "games-selector"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# 允许把 .html 当文本模块导入
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
