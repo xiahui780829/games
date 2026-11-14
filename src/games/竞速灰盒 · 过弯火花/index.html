@@ -1,0 +1,2517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>竞速灰盒垂直切片 · 过弯火花</title>
+<style>
+  * { box-sizing: border-box; }
+  html,body { margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#0E1115; color:#D8DEE6; font:13px/1.55 "Segoe UI","Microsoft YaHei",sans-serif; }
+  #cv { display:block; position:absolute; left:0; top:0; }
+  /* 调试面板：底部整条，完全位于中心禁区（y 29%–71%）之外 */
+  #debug { position:absolute; left:0; right:0; bottom:0; height:196px; display:none;
+    background:rgba(9,12,16,.94); border-top:1px solid #2C343E; padding:8px 12px;
+    font:11.5px/1.45 Consolas,"Courier New",monospace; color:#AEB8C4; z-index:20; }
+  #debug.on { display:block; }
+  #debug .row { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; }
+  #debug .col { min-width:250px; }
+  #debug pre { margin:0; white-space:pre-wrap; color:#C9D3DE; }
+  #debug button, #debug select { font:11px Consolas,monospace; background:#1B222B; color:#C9D3DE;
+    border:1px solid #39434F; padding:3px 8px; cursor:pointer; border-radius:3px; }
+  #debug button:hover { background:#2A3542; }
+  #debug button.act { background:#3A4655; border-color:#FFD400; color:#FFD400; }
+  #debug h4 { margin:0 0 4px; font-size:11px; color:#FFD400; font-weight:600; letter-spacing:.5px; }
+  #overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(8,10,13,.90); z-index:30; }
+  #overlay.off { display:none; }
+  .panel { width:min(940px,94vw); max-height:92vh; overflow:auto; background:#141A21;
+    border:1px solid #333D49; border-radius:8px; padding:22px 26px; }
+  .panel h1 { margin:0 0 4px; font-size:22px; color:#F2F5F8; }
+  .panel h2 { margin:18px 0 8px; font-size:14px; color:#FFD400; }
+  .panel p { margin:6px 0; color:#AEB8C4; }
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:14px 0; }
+  .card { border:1px solid #333D49; border-radius:6px; padding:10px; cursor:pointer; background:#1A212A; }
+  .card:hover { border-color:#6B7889; }
+  .card.sel { border-color:#FFD400; background:#232B35; }
+  .card .sw { display:inline-block; width:12px; height:12px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  .card .nm { font-size:15px; font-weight:600; color:#F2F5F8; }
+  .card .li { font-size:11px; color:#98A4B2; margin-top:5px; }
+  .btn { display:inline-block; margin-top:10px; padding:9px 22px; background:#FFD400; color:#141A21;
+    border:none; border-radius:5px; font-weight:700; cursor:pointer; font-size:14px; }
+  .btn:hover { background:#FFE24D; }
+  .btn.ghost { background:#26303B; color:#C9D3DE; }
+  .rules { background:#111720; border:1px solid #2A3440; border-radius:5px; padding:10px 14px; font-size:12px; }
+  .rules li { margin:7px 0; }
+  .tag { color:#FFD400; }
+  #err { position:absolute; left:8px; top:8px; z-index:99; display:none; max-width:70vw;
+    background:#3A1414; border:1px solid #C0392B; color:#FFD8D8; padding:8px 12px;
+    font:12px Consolas,monospace; white-space:pre-wrap; }
+  #tip { position:absolute; left:12px; bottom:206px; z-index:15; display:none;
+    color:#7E8B9A; font-size:11px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="err"></div>
+<div id="tip">D 调试面板 · P 暂停 · H 说明</div>
+
+<div id="debug">
+  <div class="row">
+    <div class="col" style="flex:1;min-width:330px">
+      <h4>实时读数（玩家 / 全部车）</h4>
+      <pre id="dbgRead"></pre>
+    </div>
+    <div class="col" style="min-width:290px">
+      <h4>时间 / 试玩</h4>
+      <div id="dbgTimeBtns"></div>
+      <h4 style="margin-top:8px">火花 / 反馈通道</h4>
+      <div id="dbgSparkBtns"></div>
+      <h4 style="margin-top:8px">AI / 守卫 / 音效</h4>
+      <div id="dbgMiscBtns"></div>
+    </div>
+    <div class="col" style="min-width:290px">
+      <h4>自测注入（验证驱动用）</h4>
+      <div id="dbgTestBtns"></div>
+      <h4 style="margin-top:8px">中心禁区 / 全局</h4>
+      <div id="dbgGlobalBtns"></div>
+      <pre id="dbgAudit" style="margin-top:8px;color:#8FA0B2"></pre>
+    </div>
+  </div>
+</div>
+
+<div id="overlay">
+  <div class="panel" id="panel"></div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   竞速灰盒垂直切片 · 单文件 / 零依赖 / file:// 直接打开
+   目的：验证「这局竞速有没有竞争欲望」。Phase 4 预制作，不是最终产品。
+   引擎：原生 Canvas 2D + 原生 JS。变量 ASCII，注释中文。
+   ===================================================================== */
+
+/* =====================================================================
+   CFG —— 所有可调参数集中于此。每项标注来源：
+     [锁定] 用户/裁定/上游 GDD 已钉死，不得改
+     [推算] 由已锁数值导出，可复核
+     [推断] 无观测依据的起始值 / 占位值，必须回填（本切片大量使用）
+   ===================================================================== */
+const CFG = {
+  /* ---- 时间与赛道换算口径 ---- */
+  MatchSeconds: 220,          // [锁定] 单局 220s（裁定：与 4200m / 19 m/s 自洽）
+  TrackLength: 4200,          // [推断] 赛道总长；时间与进度换算一律按 4200m，用户未确认
+  VBaseTrack: 19.0,           // [锁定] 赛道基础速度 m/s（4200/220≈19.09，裁定取 19.0）
+  VAbsMax: 30.0,              // [推断] v_abs_max 绝对速度上限（占位）
+  TEnd: 20,                   // [锁定] 最后 20s：禁攻击+派发停止+加速带开放+持有兑换，四事同刻
+  TimeScales: [0.5,1,2,4],   // [锁定] 调试时间倍率
+  SkipToLast: 30,             // [锁定] 「跳到最后 30 秒」按钮
+
+  /* ---- 速度修饰栈（四层，唯一入口，不许另开并行计算） ----
+     v1 = v_base_track × m_class × m_dash   （冲刺临时改 m_class，挂这一层）
+     v2 = v1 × (1 + b_catchup)              （补偿）
+     v3 = min(v2, v1 × cap_penalty)         （惩罚上限：软限速，a_pen 收敛而非钳制）
+     v4 = min(v3 + boost_band, v_abs_max)   （加速带：加法，在 cap 之后）
+  */
+  MDash: 1.35,                // [推断] m_dash 占位（S2 §3.2）；挂 ① 层，不挂 ④（④ 会绕过 cap）/②（会被 ③ 吃掉）
+  DashSeconds: 1.2,           // [锁定] 飞机冲刺持续
+  CatchupMax: 0.05,           // [锁定] 补偿上限 +5%（改法 A）
+  CatchupGapZero: 0.5,        // [锁定] 与前车时间差 <0.5s 归零
+  CatchupFullGap: 3.0,        // [推断] 线性满额所需时间差（占位）
+  CapPenaltyTiers: [0.55,0.70,0.80], // [锁定] 归零递减 cap（第 1/2/3 次及以后）
+  PenaltyDurations: [5.0,3.5,2.5],   // [锁定] 归零递减时长 s
+  PenaltyDrops: [10,6,4],     // [锁定] 归零掉进度 m
+  APen: 12.0,                 // [锁定] 软限速收敛减速度 m/s²（S1 §5.1 ①）
+  PassiveOverTau: 0.5,        // [锁定] 被推被动超速的衰减 τ（S1 §5.1 ②）
+  BoostBand: 4.0,             // [推断] 终局加速带 boost_band（加法，在 cap 之后；惩罚不被豁免）
+  ItemBoostValue: 2.0,        // [推断] 持有道具终局自动兑换的额外加速（占位）
+  ItemBoostSeconds: 3.0,      // [推断] 兑换加速持续（占位）
+  ClassExternalGain: 1.10,    // [锁定] 赛车被动「外部增益 +10%」：只作用于 boost_band，不抬补偿上限
+
+  /* ---- 伤害：受害者键聚合 TC-1（四个常量具名，禁止散落字面值） ---- */
+  ImmunityAfterZero: 3.0,       // [锁定] R-25
+  FalloffWindow: 6.0,           // [锁定] R-25，闭区间 <= 6.0s
+  DamageFalloff_Tier2: 0.70,    // [锁定] R-25
+  DamageFalloff_Tier3Plus: 0.50,// [锁定] R-25
+  ItemDamage: 45,               // [锁定] 恰好 1 种攻击道具，基准伤害
+  RamDamageMin: 15,             // [锁定] 撞击伤害下限
+  RamDamageMax: 40,             // [锁定] 撞击伤害上限
+  RamDamageBase: 30,            // [推断] 撞击占位基准（按相对速度缩放）
+  RamRange: 8,                  // [锁定] 大运撞击 8m 判定
+  ShieldSeconds: 2.5,           // [锁定] 护盾持续
+  StunBase: 0.35,               // [推断] 受击硬直基准 s
+  StunPlaneMult: 0.60,          // [锁定] 飞机被动：受击硬直 −40%
+  EnvDamage: 10,                // [锁定] 碰撞自伤 / 环境伤害（仅离散障碍碰撞，见下）
+
+  /* ---- 四车：所有车共用一套基础物理，只调 m_class 与技能（P3 硬约束） ---- */
+  CarHalfW: 1.1,                // [锁定] 碰撞宽 2.2m 的半宽
+  CarLen: 4.0,                  // [推断] 车身长度（占位，用于排队间距）
+  Classes: [
+    {key:'truck', name:'大运',   color:'#FF7A18', hp:130, v1:17.1, active:'撞击 CD30s',     activeCD:30, passive:'压舱：v<0.60×v1 推力+25%'},
+    {key:'plane', name:'飞机',   color:'#00B8D4', hp:85,  v1:20.9, active:'冲刺1.2s CD20s', activeCD:20, passive:'受击硬直 −40%'},
+    {key:'sub',   name:'潜水艇', color:'#7A8B3C', hp:100, v1:19.0, active:'水陆切换 CD8s',  activeCD:8,  passive:'水下隐身'},
+    {key:'racer', name:'赛车',   color:'#E5198C', hp:100, v1:19.0, active:'护盾2.5s CD36s', activeCD:36, passive:'外部增益 +10%'},
+  ],                            // [锁定] 色值/血量/v1/主动/被动
+  Accent: '#FFD400',            // [锁定] UI 强调色（只允许 UI 用；火花用暖白，不用四车色）
+
+  /* ---- 驾驶 / 过弯 / 磨墙 ---- */
+  ADrive: 9.0,                  // [推断] 油门加速度 m/s²
+  ABrake: 16.0,                 // [推断] 刹车减速度 m/s²
+  ACoast: 3.0,                  // [推断] 松油门滑行阻力（「过弯前松油门」能降速的物理来源）
+  ALatMax: 4.0,                 // [推断] 可用横向加速度上限 m/s²（占位，待手感回填）
+  DriftGain: 1.0,               // [推断] a_req 缺口 → 外漂位移增益 m/(m/s²)
+  MaxDrift: 5.5,                // [推断] 外漂位移上限 m ← T2-12：6.0→5.5，略大于 ±3.9 转向权限，
+                                //        满速不转向仍会被甩向外侧护栏（保留风险/坏示范），
+                                //        但玩家朝弯心反打（CounterSteerDrop）+ 转向权限可把车拉回线内，转向真正有效
+  DriftLerp: 2.2,               // [推断] 外漂 / 自然回正平滑速率
+  CounterSteerDrop: 2.0,        // [推断] T2-12：朝弯心反打时按 |steer|×本值 削减外漂（封顶 MaxDrift），
+                                //        让「转对方向」进一步把车收回，但不至于满速零代价
+  SteerRate: 9.0,               // [推断] 转向改变 laneOffset 的速率 m/s
+  SteerFollow: 8.0,             // [推断] d 跟随目标平滑速率
+  GrindDecel: 9.0,              // [推断] 磨墙掉速 m/s² —— 磨墙的唯一代价
+  GrindHoldSeconds: 0.35,       // [推断] T2-12：接触后「贴护栏持续摩擦」保持时长（原 0.90→0.35，避免一蹭就粘死）
+  GrindReleaseV: 13.0,          // [推断] T2-12：速度降到此值以下即脱离磨墙（原 11.0→13.0，对齐「约 12–13 m/s 干净通过」）
+  DemoLoopS: 3000,              // [推断] 「看示范」自动循环：玩家车越过此 s 即重开一局（移到海域之后，让示范覆盖海域段）
+  MinCrawl: 1.2,                // [推断] 反卡死最低速度 m/s
+
+  /* ---- 车-墙摩擦火花：按 art-bible 附录 C 定稿（主理人拍板方案 A 单色恒定）----
+     全部可调参数集中于此；[锁定] 项不得随观感放宽，其余 [推断] 待真人试玩回填。 */
+  SparksOn: true,               // [锁定] 调试面板「火花 开/关」对照开关；对齐 FX_WallScrape_Enabled
+                                //        独立调试开关，不与 R-26 车-车挤压粒子共用开关（附录 C.7）
+  SparkRateCap: 18,             // [锁定] 发射率硬封顶 18/s（SparkEmitCap；附录 C.0 例外 1）
+  SparkRateGlobalCap: 72,       // [推断] 全场发射率封顶（4 车同时磨墙时，仅防极端帧，不是表现强度输入）
+  SparkRampSeconds: 0.20,       // [推断] T_ramp 建立期：E(t)=18×min(1,t_c/0.20)；由「持续接触态时长」驱动，
+                                //        完全不读接触深度、不读车速（附录 C.4.4）
+  SparkLifeMin: 0.2,            // [锁定] 粒子寿命下限
+  SparkLifeMax: 0.5,            // [锁定] 粒子寿命上限（默认 0.35s；生成即峰值、无上升沿）
+  SparkColorStart: '#FFF3D6',   // [锁定] 单色恒定色相；仅亮度 100%→40% + alpha 衰减，不做色相迁移
+                                //        禁止四车高饱和区分色 / 第五种高饱和色 / 按载具着色
+                                //        #FFD400 是 §3.3「全 UI 独家」注意色，世界空间粒子衰减到它
+                                //        会与 HUD 岔路提示 / 规则变化串味（§13 第三类）
+  SparkBackSpeed: 6.0,          // [推断] 主方向 -s（赛道局部切向向后）恒定 6.0 m/s，不随车速缩放
+  SparkOutSpeed: 1.2,           // [推断] 沿接触法线向外 1.2 m/s（≈主方向 20%）；向上(z)/向前(+s)分量恒为 0
+  SparkConeHalfDeg: 12,         // [推断] 粒子级伪随机扩散锥半角 12°，不构成发射节奏
+  SparkTailMeters: 2.1,         // [推断] 恒定尾迹 ≤2.1m（算式 6.0 m/s × 0.35s），不随 t / 车速增长
+  SparkDMin: 0.15,              // [推断] 选边状态校验阈值 m（不是强度输入；与 R-26 的 0.1m 刻意错开）
+  SparkFogNear: 40,             // [推断] 火花第三组独立雾常量①：≤40m 满强度
+  SparkFogFar: 60,              // [推断] 火花第三组独立雾常量②：40–60m 线性衰减 / 60m 归零
+  SparkCull: 65,                // [推断] 火花第三组独立雾常量③：65m 渲染剔除
+                                //        三者不得与气泡 / 冒烟的 40m 常量共用（附录 C.4.6 / C.8 第 3 条）
+
+  /* ---- 赛道几何（俯视「拉直的赛道带」：横轴 = s 弧长，纵轴 = d 横向偏移） ---- */
+  PX_PER_M: 8.0,                // [推断] 横向像素/米
+  PY_PER_M: 8.0,                // [推断] 纵向像素/米（与横向同值，保证弹道方向各向同性）
+  BaseYFrac: 0.52,              // [推断] 中心线屏幕基准高度
+  MainHalfW: 5.0,               // [锁定] 主赛道 10m
+  NarrowHalfW: 2.0,             // [锁定] 窄近路 4.0m（≈1.8 车宽）
+  WideHalfW: 7.0,               // [锁定] 宽远路 14m
+  RouteHalf: [5.0, 2.0, 7.0],  // [锁定] 主 / 窄 / 宽 净半宽
+  RouteLengths: [300,150,360],  // [锁定] 主 / 窄 / 宽 路线长度 m
+  ForkStart: 1500,              // [推断] 分叉起点 s
+  ForkSpan: 300,                // [锁定] 分叉段全局 s 跨度（= 主赛道长度）
+  ForkPlazaHalf: 20,            // [推断] 岔路前过渡广场半宽 m（占位，仅为留出选路空间）
+  ForkSignLead: 40,             // [锁定] 岔路口提前 40m 只标「此处有岔路」
+  RouteCenters: [-13, 0, 13],   // [推断] 三带中心 d（场景布局占位）
+  OverlapTol: 0.50,             // [锁定] 4m 走廊强制互穿容差 0.50（18% 是几何下限不是上限）
+  ObstacleCount: 4,             // [锁定] 窄近路 4 个障碍
+  ObstacleSpacingGlobal: 36,    // [推断] 障碍间距 36 全局米 = 18 窄路米（15–20m 口径）
+  ObstacleOffsetD: 0.65,        // [推断] 障碍在窄路内的横向偏移 m（交替 ±，逼出走线）
+  /* ---- 海路（主线共享海域，所有车经此；本切片原本砍掉，现补回）---- */
+  SeaStart: 2200,              // [新增] 海路段起点 s（主线后段，分叉汇合后所有人必经）
+  SeaEnd: 2750,                // [新增] 海路段终点 s（带宽 550m）
+  SeaLandFactor: 0.80,         // [新增] 非潜艇在海域：v1 × 0.80（陆上车泡水里挣扎减速）
+  SeaSubFactor: 1.15,          // [新增] 潜艇在海域：v1 × 1.15（潜艇在水里如鱼得水，真正有用）
+  SeaFill: '#2C5566',          // [新增] 海域水面填充色（灰盒，区别于沥青灰 #3A434D）
+  ObstacleHitHalfD: 0.75,       // [推断] 障碍横向碰撞半宽 m：必须小于走廊可用 ±0.9m，保证可躲
+  ObstacleSlow: 0.55,           // [推断] 撞障碍速度乘数（占位）
+
+  /* ---- 中心线：3–4 段正弦/圆弧叠加，形成可辨曲率 κ(s)≈|y_c''(s)| ----
+     这里用 7 个高斯平滑弯（远多于「至少 3 个可辨弯道」）：
+       缓弯 = 全速可干净通过；中弯 = 轻刹可干净；硬弯 = 全速必蹭墙
+     高斯二阶导解析可求，κ 无跳变；分叉区 1500–1800 无弯，保证选路清晰。
+  */
+  Corners: [                     // [推断] 全部为占位几何参数
+    /* κ_max = amp·18/len²。a_req(19 m/s) = 361·κ_max > ALatMax(4.0) ⇒ 全速必蹭墙；
+       降到 v ≤ sqrt(ALatMax/κ_max) ≈ 12–13 m/s 即可干净通过。 */
+    {s:420,  len:150, amp:2.6, sign: 1, label:'缓弯'},  // κ=0.00208  a_req=0.75  全速干净
+    {s:760,  len:68,  amp:7.0, sign:-1, label:'急弯'},  // κ=0.02725  a_req=9.84  全速必蹭墙
+    {s:1150, len:95,  amp:6.0, sign: 1, label:'中弯'},  // κ=0.01197  a_req=4.32  轻刹可干净
+    {s:2050, len:72,  amp:6.4, sign:-1, label:'急弯'},  // κ=0.02222  a_req=8.02  全速必蹭墙
+    {s:2680, len:150, amp:2.8, sign: 1, label:'缓弯'},  // κ=0.00224  a_req=0.81  全速干净
+    {s:3200, len:70,  amp:7.0, sign:-1, label:'急弯'},  // κ=0.02571  a_req=9.28  全速必蹭墙
+    {s:3800, len:100, amp:6.2, sign: 1, label:'中弯'},  // κ=0.01116  a_req=4.03  轻刹可干净
+  ],
+
+  /* ---- 道具派发（恰好 1 种，派发即入栏，无世界拾取箱） ---- */
+  DispatchTick: 6.0,            // [推断] 派发节拍 s（占位，R3 首要旋钮）
+  PEmit: 0.75,                  // [推断] 每节拍产出概率（占位）
+  WLag: 1.5,                    // [锁定] 后 50% 派发权重 ×1.5；只改变「归谁」，不改变全场总量
+  WBase: 1.0,                   // [锁定]
+  HoldCap: 1,                   // [锁定] 持有上限 1
+  ProjSpeed: 70,                // [推断] 弹速 m/s（占位）
+  ProjRange: 60,                // [推断] 射程 m（占位，R3 回退顺序① 首要旋钮）
+  ProjHitR: 1.8,                // [推断] 命中半径 m
+
+  /* ---- 竞争引擎 6 条（灰盒简化表现，但一条都不少） ---- */
+  BiteTier2: 2.0,               // [锁定] R-28 与前车时间差 ≤2.0s → 边缘细弧
+  BiteTier1: 1.0,               // [锁定] R-28 ≤1.0s → 加粗 + 低频心跳
+  HeartbeatPeriod: 1.2,         // [推断] <60BPM 低频心跳周期 s
+  SwapBannerTime: 0.6,          // [锁定] R-29 换位横幅 0.6s
+  SwapMergeWindow: 1.0,         // [锁定] R-29 1.0s 内多次交换合并
+  ZeroSlowScale: 0.35,          // [锁定] R-30 0.35× 时间缩放
+  ZeroSlowReal: 0.15,           // [锁定] R-30 现实时间 ≤0.15s（归因「插进去」，不盖住 R-22/23 判定窗）
+  AttrTextReal: 1.0,            // [推断] 归因文字停留现实时间 s（占位，仅延长文字，不延长慢放）
+  LowHpFrac: 0.25,              // [锁定] R-31 hp<25%
+  LowHpHz: 0.8,                 // [锁定] R-31 0.8Hz 呼吸
+  LowHpAlphaMax: 0.16,          // [锁定] R-31 最大 alpha（>0.20 破坏等亮度守卫）
+  LowHpFade: 1.0,               // [锁定] R-31 恢复后 1.0s 淡出
+  HuntStart: 0.65,              // [锁定] R-32 赛程 ≥65% 头名标记
+  HuntRed: 0.85,                // [锁定] R-32 ≥85% 转红脉冲
+  SubTrailSeconds: 2.0,         // [锁定] DEV-1 水下潜艇只给 2.0s 衰减尾迹，不给实时点
+  SubHiddenRange: 60,           // [锁定] DEV-1 ≥60m 外不可见
+
+  /* ---- 中心禁区：x 22%–78% / y 29%–71% 不放任何 UI（火花是场景粒子，不进 HUD） ---- */
+  Forbid: {x0:0.22, x1:0.78, y0:0.29, y1:0.71}, // [锁定]
+
+  /* ---- 反馈通道：车-墙摩擦 与 车-车挤压 严格分离（见 §硬约束 2） ---- */
+  AudioOn: true,                // [推断→回填] 默认开：竞争状态音是本轮核心反馈；首帧静音由「无用户手势不建 context + running 前丢弃播放」保证，不靠默认关规避
+  SqueezeTiltMax: 0.28,         // [推断] 车-车挤压：车体侧倾最大弧度
+  SqueezeJitter: 1.6,           // [推断] 车-车挤压：连续震频像素
+  RoadFill: '#262B31',          // [锁定] 三条路同底色（PR-1 平均亮度对齐）
+  RoadEdge: '#454C55',          // [锁定] 三条路同描边亮度
+  GravelColor: '#30363D',       // [推断] 窄路碎石剪影（同灰系，低对比，不抬平均亮度）
+  ObstacleColor: '#1F242A',     // [推断] 窄路障碍剪影（同灰系，低对比）
+
+  /* ---- 竞争改造新增项（对齐单 §三之二 / 竞争玩法设计-v1）：不改动上方任何 [锁定] 值 ---- */
+  GhostColor: '#A98FD1',        // [新增] 幽灵车 / 记录层语义色（视觉基调 §2.2），不得在绘制代码硬编码
+  GhostSampleEvery: 0.1,        // [新增] 幽灵轨迹采样间隔 s（每 6 个固定步长）
+  GhostMaxSamples: 2200,        // [新增] 采样上限（220s / 0.1s）
+  GhostFillAlpha: 0.22,         // [新增] 幽灵填充 alpha（0.18~0.25）
+  GhostLineWidth: 1.5,          // [新增] 幽灵虚线线宽
+  GhostDash: [6,5],             // [新增] 幽灵虚线样式
+  BestKey: 'ghost_v1',          // [新增] 本地成绩键，全项目唯一存档收口
+  AiPStart: 0.18,               // [新增] 加压起始赛程
+  AiPFull: 0.70,                // [新增] 加压满额赛程
+  AiAmp: [0.10,0.075,0.05],    // [新增] 三台 AI 加压上限（按 car.idx-1 固定分配，不消耗 RNG）
+  AiKLo: 0.90, AiKHi: 1.10,    // [新增] ①层系数上下限，保证 ③cap 与 ④VAbsMax 不被绕过
+  AiLeadFree: 15.0,             // [新增] 领先多少 m 内全力追（允许短暂反超）
+  AiLeadHard: 40.0,             // [新增] 领先多少 m 时收油到硬上限
+  AiLeadCapV: 16.0,             // [新增] 收油后的绝对速度上限 m/s
+};
+
+/* 由已锁值推算出的 m_class（v1 = v_base_track × m_class） */
+CFG.Classes.forEach(function(c){ c.mClass = c.v1 / CFG.VBaseTrack; }); // [推算]
+
+/* =====================================================================
+   基础工具
+   ===================================================================== */
+const clamp = function(v,a,b){ return v<a?a:(v>b?b:v); };
+const lerp  = function(a,b,t){ return a+(b-a)*t; };
+function makeRng(seed){
+  let a = seed>>>0;
+  return function(){
+    a += 0x6D2B79F5;
+    let t = a;
+    t = Math.imul(t ^ (t>>>15), t | 1);
+    t ^= t + Math.imul(t ^ (t>>>7), t | 61);
+    return ((t ^ (t>>>14))>>>0) / 4294967296;
+  };
+}
+function hex2rgb(h){
+  h = h.replace('#','');
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+}
+/* mixColor 已删除：火花定稿为单色恒定 #FFF3D6，不做双停色相迁移，
+   不再有任何世界空间粒子需要颜色插值；#FFD400 仅保留为 UI 独占强调色。 */
+function rgba(h,al){ const c=hex2rgb(h); return 'rgba('+c[0]+','+c[1]+','+c[2]+','+al+')'; }
+function fmt(v,n){ return (v>=0?'+':'')+v.toFixed(n===undefined?2:n); }
+
+/* =====================================================================
+   DOM / Canvas
+   ===================================================================== */
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let W = 1280, H = 720, DPR = 1;
+function resize(){
+  W = window.innerWidth || 1280;
+  H = window.innerHeight || 720;
+  DPR = window.devicePixelRatio || 1;
+  cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+  cv.style.width = W+'px'; cv.style.height = H+'px';
+  if (ctx.setTransform) ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', resize);
+resize();
+window.addEventListener('error', function(e){
+  const el = document.getElementById('err');
+  if (el){ el.style.display='block'; el.textContent = '运行时错误：'+(e.message||e); }
+});
+
+/* =====================================================================
+   赛道几何
+   中心线 y_c(s) = Σ sign·amp·exp(-u²)，u=(s-c0)/sigma，sigma=len/3
+   y_c''(s)     = Σ sign·amp·(4(s-c0)²/sigma⁴ − 2/sigma²)·exp(-u²)
+   κ(s) ≈ |y_c''(s)|（小斜率近似）
+   ===================================================================== */
+function yc(s){
+  let y=0;
+  for (let i=0;i<CFG.Corners.length;i++){
+    const c=CFG.Corners[i], c0=c.s+c.len/2, sig=c.len/3, u=(s-c0)/sig;
+    if (u<-3.2||u>3.2) continue;
+    y += c.sign*c.amp*Math.exp(-u*u);
+  }
+  return y;
+}
+function yc2(s){
+  let a=0;
+  for (let i=0;i<CFG.Corners.length;i++){
+    const c=CFG.Corners[i], c0=c.s+c.len/2, sig=c.len/3, u=(s-c0)/sig;
+    if (u<-3.2||u>3.2) continue;
+    const d=s-c0, s2=sig*sig, G=Math.exp(-u*u);
+    a += c.sign*c.amp*(4*d*d/(s2*s2) - 2/s2)*G;
+  }
+  return a;
+}
+function kappaSigned(s){ return yc2(s); }
+function kappaAt(s){ return Math.abs(yc2(s)); }
+
+const FORK_A = CFG.ForkStart - CFG.ForkSignLead;  // 广场起点
+const FORK_B = CFG.ForkStart;                     // 分叉点
+const FORK_C = CFG.ForkStart + CFG.ForkSpan;      // 汇合点
+const FORK_D = FORK_C + CFG.ForkSignLead;         // 汇合过渡终点
+
+/* 单条带在 s 处的 (中心 d, 半宽)。r=路线号；分叉外 r 无关（合并为单带）。
+   广场段（FORK_A..FORK_B）：单带逐渐加宽，让玩家把车摆到 -13/0/+13 三档位置。
+   分叉段（FORK_B..FORK_C）：三条并行带，中心固定，净宽按表。
+   汇合段（FORK_C..FORK_D）：三带中心平滑收敛回 0。 */
+function roadGeom(s, r){
+  if (s < FORK_A) return {c:0, hw:CFG.MainHalfW};
+  if (s < FORK_B){
+    const t=clamp((s-FORK_A)/CFG.ForkSignLead,0,1);
+    return {c:0, hw:lerp(CFG.MainHalfW, CFG.ForkPlazaHalf, t)};
+  }
+  if (s <= FORK_C) return {c:CFG.RouteCenters[r], hw:CFG.RouteHalf[r]};
+  if (s <= FORK_D){
+    const t=clamp((s-FORK_C)/CFG.ForkSignLead,0,1);
+    return {c:lerp(CFG.RouteCenters[r],0,t), hw:lerp(CFG.RouteHalf[r],CFG.MainHalfW,t)};
+  }
+  return {c:0, hw:CFG.MainHalfW};
+}
+function centerAt(s, r){ return roadGeom(s,r).c; }
+function halfWidthAt(s, r){ return roadGeom(s,r).hw; }
+function inFork(s){ return s>=FORK_B && s<=FORK_C; }
+function isSea(s){ return s>=CFG.SeaStart && s<=CFG.SeaEnd; }   // 海路判定：分叉汇合后主线后段的共享水域
+/* 路线长度不同 → 同一 v 下全局 s 推进速度不同：窄近路 = 2×，宽远路 = 300/360×。
+   这是「捷径价值」的物理来源；按 PR-1 / R-03，视觉上绝不标注哪条更快。 */
+function progressFactor(s, r){ return inFork(s) ? CFG.ForkSpan/CFG.RouteLengths[r] : 1; }
+function toPx(s, d){ return {x:s*CFG.PX_PER_M, y:(yc(s)+d)*CFG.PY_PER_M}; }
+
+/* =====================================================================
+   状态与实体
+   ===================================================================== */
+let state = null;
+let cars = [], projectiles = [], sparks = [];
+const dbg = {
+  hitEvents:0, grindFrames:0, sparkEmitted:0, itemsEmitted:0, itemsDecided:0,
+  grindSnapHp:null, grindSnapLog:null, grindDeltaHp:0, grindDeltaLog:0,
+  lastFrameSparks:0, fps:60, forcedZeroCount:0
+};
+
+function makeCar(idx, classIdx, isPlayer){
+  const cls = CFG.Classes[classIdx];
+  return {
+    idx: idx, cls: cls, isPlayer: isPlayer,
+    name: isPlayer ? '玩家1(你)' : ('玩家'+(idx+1)),
+    s: 0, d: 0, v: 0, vDrive: 0, vPush: 0,
+    dBase: 0, drift: 0, laneOffset: 0,
+    hp: cls.hp, hit_log: [], immune_until: -1, shield_until: -1,
+    penaltyUntil: -1, capPenalty: 1.0, zeroCount: 0,
+    cdUntil: 0, dashUntil: -1, stunUntil: -1, itemBoostUntil: -1,
+    held: 0, heldFlash: 0, nextFire: 0, underwater: false, trail: [],
+    route: 0, aiRoute: 0, aiCornerMargin: 1.0, aiAimNoise: 0.2, aiFocus: 0.5,
+    rank: idx+1, gapAhead: 0, gapBehind: 0, isLag: false, bCatchup: 0,
+    grind: false, grindSide: 0, grindDepth: 0, grindTime: 0, grindHold: 0, grindTarget: null,
+    sparkAcc: 0, sparkThisFrame: 0,
+    squeeze: false, squeezeSide: 0, squeezeTime: 0, squeezeTarget: null,
+    propTarget: null,             // 离散障碍事件标签（一次性，非持续接触态）
+    ringUntil: -1, ringLabel: '', hitObstacles: {}, stuckTimer: 0,
+    finished: false, finishTime: -1,
+    stack: {v1:0,v2:0,v3:0,v4:0,cap:1}, lastKappa: 0, inputThrottle: 1
+  };
+}
+
+function newMatch(playerClassIdx, fixedSeed){
+  const seed = (fixedSeed!==undefined ? fixedSeed : (Date.now() ^ 0x9E3779B9))>>>0;
+  state = {
+    started:true,
+    elapsed:0, finished:false, paused:false, finalPhase:false, finalTriggered:false,
+    timeScale:1, seed:seed, rng:makeRng(seed),
+    /* 派发专用 RNG：与 AI / 火花 / 技能等玩法随机源隔离。
+       否则「后 50% 权重 ×1.5 只改变归谁、不改变全场总量」无法被程序化验证：
+       改变归属会改变战局 → 改变玩法 rng 消耗 → 反过来改变 PEmit 抽样。 */
+    dispatchRng:makeRng((seed ^ 0x5BD1E995)>>>0),
+    playerIdx:0, mouse:{x:W*0.6,y:H*0.5}, aimAngle:0,
+    keys:{}, pressed:{}, camS:0, camPush:0,
+    slowRemain:0, attribution:null, attrUntil:0,
+    banner:null, bannerUntil:0, bannerLast:-99, bannerCount:0, bannerColors:[],
+    finalBannerUntil:0, lowHpFade:0, lowHpWas:false,
+    swapLog:[], zeroEvents:[], huntStage:0, raceProgress:0, order:[], leader:null,
+    sparksOn:CFG.SparksOn, audioOn:CFG.AudioOn, weightCompOn:true,
+    aiDiff:'normal', showForbid:false, helpOpen:false,
+    sparkGlobalAcc:0, dispatchAcc:0, tickCount:0,
+    audio:null, grindSfxAt:-1, squeezeSfxAt:-1,
+    resultShown:false, demo:false,
+    /* 竞争改造新增状态（文件尾占位 state 必须同步，漏一处开局面板即出 undefined） */
+    best:null, ghostSamples:[], ghostAcc:0, maxPlayerS:0, newBest:false,
+    nearWarnAt:-99, competeAt:-99, resultSfxPlayed:false, audioUnlocked:false
+  };
+  projectiles = []; sparks = [];
+  dbg.hitEvents=0; dbg.grindFrames=0; dbg.sparkEmitted=0; dbg.itemsEmitted=0; dbg.itemsDecided=0;
+  dbg.grindSnapHp=null; dbg.grindSnapLog=null; dbg.grindDeltaHp=0; dbg.grindDeltaLog=0;
+  dbg.lastFrameSparks=0; dbg.forcedZeroCount=0;
+
+  cars = [];
+  /* 玩家选 1，AI 3；四台载具全部上场（剩余 3 类按序分给 AI） */
+  const others=[]; for(let i=0;i<4;i++) if(i!==playerClassIdx) others.push(i);
+  cars.push(makeCar(0, playerClassIdx, true));
+  for(let i=0;i<3;i++) cars.push(makeCar(i+1, others[i], false));
+
+  /* 开局错开一点 s，避免同帧全部重叠（不影响物理一致性） */
+  for(let i=0;i<cars.length;i++){ cars[i].s = -i*3.0; cars[i].vDrive = CFG.VBaseTrack*0.55; }
+
+  /* 局内固定随机：AI 过弯减速余量、瞄准精度、集火倾向（不改共用物理） */
+  for(let i=1;i<cars.length;i++){
+    const c=cars[i];
+    c.aiCornerMargin = 0.80 + state.rng()*0.60;  // >1 表示会 understeer、会磨墙出火花
+    c.aiAimNoise = 0.20;
+    c.aiFocus = state.rng();
+  }
+  applyAIDifficulty();
+  computeRanks();
+  state.prevRanks = cars.map(function(c){ return c.rank; });
+  state.camS = Math.max(0, cars[0].s - (W/CFG.PX_PER_M)*0.30);
+  /* 成绩与幽灵：唯一存档收口，只在 newMatch 读、showResult 写 */
+  state.best = loadBest();
+  state.ghostSamples = []; state.ghostAcc = 0;
+  state.maxPlayerS = Math.max(0, cars[0].s);
+  state.newBest = false; state.resultSfxPlayed = false;
+  state.nearWarnAt = -99; state.competeAt = -99; state.audioUnlocked = false;
+  hideOverlay();
+  buildResultIfNeeded(true);
+}
+
+function applyAIDifficulty(){
+  const d = state.aiDiff;
+  for(let i=1;i<cars.length;i++){
+    const c=cars[i];
+    if(d==='easy'){ c.aiAimNoise=0.48; c.aiFocus=0.15; c.aiCornerMargin=Math.max(c.aiCornerMargin,1.15); }
+    else if(d==='hard'){ c.aiAimNoise=0.07; c.aiFocus=0.90; }
+    else { c.aiAimNoise=0.22; c.aiFocus=0.50; }
+  }
+}
+
+/* =====================================================================
+   地基 B：名次与进度（唯一名次口径，S3 只消费唯一 rank，并列按 idx 打破）
+   ===================================================================== */
+function computeRanks(){
+  const order = cars.slice().sort(function(a,b){ return (b.s-a.s) || (a.idx-b.idx); });
+  state.order = order;
+  state.leader = order[0];
+  for(let i=0;i<order.length;i++){
+    const c=order[i];
+    c.rank = i+1;
+    c.gapAhead  = i>0 ? order[i-1].s - c.s : 0;
+    c.gapBehind = i<order.length-1 ? c.s - order[i+1].s : 0;
+  }
+  let maxS=0; for(let i=0;i<cars.length;i++) maxS=Math.max(maxS,cars[i].s);
+  state.raceProgress = clamp(maxS/CFG.TrackLength,0,1);
+  state.huntStage = state.raceProgress>=CFG.HuntRed ? 2 : (state.raceProgress>=CFG.HuntStart ? 1 : 0);
+  const nLag = Math.floor(cars.length/2);           // [推算] floor(4/2)=2
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i];
+    c.isLag = c.rank > (cars.length - nLag);        // [锁定] rank > N − n_lag
+    const gapTime = c.gapAhead / Math.max(c.v, 1);  // 改法 A：按「与前车时间差」线性
+    let b = 0;
+    if (c.isLag){
+      b = clamp((gapTime - CFG.CatchupGapZero)/(CFG.CatchupFullGap - CFG.CatchupGapZero), 0, 1) * CFG.CatchupMax;
+    }
+    c.bCatchup = b;  // 赛车被动「外部增益 +10%」只作用于 boost_band，不抬补偿上限（守住 +5%）
+  }
+}
+
+/* =====================================================================
+   竞争玩法纯函数（不读 DOM、不读 state.rng，可脱离引擎独立复算；挂 window.GBX）
+   ===================================================================== */
+function aiPressureK(p, idx){
+  const u = clamp((p - CFG.AiPStart)/(CFG.AiPFull - CFG.AiPStart), 0, 1);
+  const S = u*u*(3 - 2*u);                        // smoothstep，0→1 单调递增
+  const A = CFG.AiAmp[clamp(idx-1, 0, CFG.AiAmp.length-1)];
+  return clamp(1 + A*S, CFG.AiKLo, CFG.AiKHi);
+}
+function aiLeadCapped(v1, lead){
+  if (lead <= CFG.AiLeadFree) return v1;
+  const w = clamp((lead - CFG.AiLeadFree)/(CFG.AiLeadHard - CFG.AiLeadFree), 0, 1);
+  return v1*(1-w) + CFG.AiLeadCapV*w;
+}
+function betterThan(cur, best){
+  if(!best) return true;
+  const cf = cur.finishTime >= 0, bf = best.finishTime >= 0;
+  if(cf && bf) return cur.finishTime < best.finishTime;   // 都完赛：用时更小
+  if(cf !== bf) return cf;                                 // 一方完赛：完赛者更好
+  return cur.maxS > best.maxS;                             // 都没完赛：进度更大
+}
+function ghostAt(samples, t){
+  if(!samples || !samples.length) return null;
+  if(t <= samples[0].t) return {s:samples[0].s, d:samples[0].d};
+  const last = samples[samples.length-1];
+  if(t >= last.t) return {s:last.s, d:last.d};
+  let lo=0, hi=samples.length-1;
+  while(lo+1<hi){ const mid=(lo+hi)>>1; if(samples[mid].t<=t) lo=mid; else hi=mid; }
+  const a=samples[lo], b=samples[hi], u=(t-a.t)/Math.max(b.t-a.t,1e-9);
+  return {s:a.s+(b.s-a.s)*u, d:a.d+(b.d-a.d)*u};
+}
+/* 与幽灵车实时秒差：时间轴口径（对齐单 §三之二 第 3 条）。
+   t_ghost(s_P) = 历史最佳样本中「到达玩家当前位置 s_P」的时刻，按 s 线性插值。
+   ghostSecDelta = state.elapsed − t_ghost(s_P)：<0 比上次快，>0 比上次慢。
+   player.s − ghost.s 只是米差，只用于回放绘制与内部判定，禁止当秒差显示。
+   HUD / 结算 / 音效 / 特效四处共用本函数，保证同源同值。 */
+function ghostTimeAt(samples, s){
+  if(!samples || samples.length < 2) return null;
+  if(s <= samples[0].s) return samples[0].t;
+  const last = samples[samples.length-1];
+  if(s >= last.s) return last.t;
+  let lo=0, hi=samples.length-1;
+  while(lo+1<hi){ const mid=(lo+hi)>>1; if(samples[mid].s<=s) lo=mid; else hi=mid; }
+  const a=samples[lo], b=samples[hi];
+  const u=(s-a.s)/Math.max(b.s-a.s, 1e-9);
+  return a.t+(b.t-a.t)*u;
+}
+function ghostDeltaSeconds(samples, playerS, now){
+  const tg = ghostTimeAt(samples, playerS);
+  return tg===null ? null : (now - tg);
+}
+
+/* =====================================================================
+   速度修饰栈（四层，唯一计算入口；调试面板逐层显示 v1..v4）
+   ===================================================================== */
+function speedStack(car, now){
+  const cls = car.cls;
+  /* ① 冲刺临时改写 m_class —— 挂 ① 层：cap 仍在，基数抬高，惩罚不被解除 */
+  const mDash = (now < car.dashUntil) ? CFG.MDash : 1;
+  /* 海路环境修正：海域段（isSea）里，潜艇 ×SeaSubFactor 加速、其余 ×SeaLandFactor 减速。
+     这是「海路 ≠ 陆路」的核心差异，也是潜艇唯一的专属优势来源（不改四车共用底盘）。 */
+  let seaMul = 1;
+  if (isSea(car.s)) seaMul = (cls.key==='sub') ? CFG.SeaSubFactor : CFG.SeaLandFactor;
+  let v1 = CFG.VBaseTrack * cls.mClass * mDash * seaMul;
+  /* ①层竞争加压：仅对 AI 生效，确定性（不消耗 state.rng），玩家速度完全不改 */
+  let k = 1;
+  if(!car.isPlayer){
+    k = aiPressureK(state.raceProgress, car.idx);
+    v1 = v1 * k;
+    /* 反超后收油：lead 是领先玩家的弧长米数（car.s 是米，不是秒） */
+    const lead = car.s - cars[state.playerIdx].s;
+    v1 = aiLeadCapped(v1, lead);
+  }
+  /* ② 补偿 */
+  const v2 = v1 * (1 + car.bCatchup);
+  /* ③ 惩罚上限：以 v1（不含补偿）为基；正常 1.0 / 归零后 0.55→0.70→0.80 */
+  const cap = (now < car.penaltyUntil) ? car.capPenalty : 1.0;
+  const v3 = Math.min(v2, v1 * cap);
+  /* ④ 加速带：加法、在 cap 之后。赛车被动外部增益 +10% 只放这一层 */
+  let boost = 0;
+  if (state.finalPhase) boost += CFG.BoostBand;
+  if (now < car.itemBoostUntil) boost += CFG.ItemBoostValue;
+  if (cls.key==='racer') boost *= CFG.ClassExternalGain;
+  const v4 = Math.min(v3 + boost, CFG.VAbsMax);
+  return {v1:v1, v2:v2, v3:v3, v4:v4, cap:cap, boost:boost, mDash:mDash, k:k};
+}
+
+/* =====================================================================
+   伤害：受害者键聚合 TC-1
+   on_hit(attacker, victim, base_damage, now)
+   ===================================================================== */
+function on_hit(attacker, victim, base_damage, now){
+  /* 免疫期命中：0 伤害、不进 hit_log（S1 §4 易错点 1） */
+  if (now < victim.immune_until) return 0;
+  /* 递减按受害者键累计；6.0s 闭区间 <= */
+  let n = 0;
+  for(let i=0;i<victim.hit_log.length;i++){
+    const dt = now - victim.hit_log[i];
+    if (dt>=0 && dt<=CFG.FalloffWindow) n++;
+  }
+  const mult = n===0 ? 1.0 : (n===1 ? CFG.DamageFalloff_Tier2 : CFG.DamageFalloff_Tier3Plus);
+  /* 护盾挡下命中也要计入：交火发生了，要计数（S2 §3.3） */
+  victim.hit_log.push(now);
+  /* 顺手剪掉窗口外的旧记录，避免数组无限增长（语义不变） */
+  while(victim.hit_log.length && now - victim.hit_log[0] > CFG.FalloffWindow + 0.001) victim.hit_log.shift();
+  let dmg = base_damage * mult;
+  if (now < victim.shield_until) dmg = 0;   // 护盾挡伤害，不挡命中
+  victim.hp -= dmg;
+  if (dmg>0){
+    victim.stunUntil = now + CFG.StunBase * (victim.cls.key==='plane' ? CFG.StunPlaneMult : 1.0);
+    victim.heldFlash = 0.25;
+  }
+  dbg.hitEvents++;
+  if (victim.hp <= 0) applyZero(victim, attacker, now);
+  return dmg;
+}
+
+function applyZero(victim, attacker, now){
+  /* 归零不淘汰（P1）：hp 复位、掉进度、限时 cap 惩罚、3s 免疫，车继续跑 */
+  const tier = Math.min(victim.zeroCount, CFG.CapPenaltyTiers.length-1); // [推算] 0/1/2+
+  victim.penaltyUntil = now + CFG.PenaltyDurations[tier];
+  victim.capPenalty   = CFG.CapPenaltyTiers[tier];
+  victim.s = Math.max(0, victim.s - CFG.PenaltyDrops[tier]);
+  victim.immune_until = now + CFG.ImmunityAfterZero;
+  victim.hp = victim.cls.hp;
+  victim.zeroCount++;
+  victim.hit_log.length = 0;
+  victim.vDrive = Math.min(victim.vDrive, CFG.VBaseTrack*victim.cls.mClass*victim.capPenalty);
+  state.zeroEvents.push({victim:victim, attacker:attacker, now:now});
+}
+
+/* =====================================================================
+   道具：恰好 1 种（脉冲弹 45），派发即入栏，无世界拾取箱
+   +50% 是「派发权重」，只改变归谁，不改变全场总量（绝不实现成多刷 50% 道具）
+   ===================================================================== */
+function dispatchItems(now, dt){
+  if (state.finalPhase) return;                    // 派发停止（与禁攻击同刻）
+  state.dispatchAcc += dt;
+  if (state.dispatchAcc < CFG.DispatchTick) return;
+  state.dispatchAcc -= CFG.DispatchTick;
+  state.tickCount++;
+  /* 两个骰子每节拍无条件各消耗一次：RNG 序列与「候选集大小 / 道具归属」完全解耦。
+     否则归属不同 → 后续候选集不同 → PEmit 抽样错位 → 全场总量会随补偿开关漂移，
+     「+50% 只改变归谁、不改变全场总量」就变成假的。 */
+  const rollEmit = state.dispatchRng();
+  const rollPick = state.dispatchRng();
+  if (rollEmit > CFG.PEmit) return;                // 每节拍全场至多 1 枚
+  dbg.itemsDecided++;
+  const cand = cars.filter(function(c){ return c.held < CFG.HoldCap && !c.finished; });
+  if (!cand.length) return;                        // 候选为空 → 本节拍不产出、不结转、不补发
+  let total = 0;
+  const ws = cand.map(function(c){
+    const w = (state.weightCompOn && c.isLag) ? CFG.WLag : CFG.WBase;
+    total += w; return w;
+  });
+  let r = rollPick*total, pick = cand[cand.length-1];
+  for(let i=0;i<cand.length;i++){ r -= ws[i]; if(r<=0){ pick=cand[i]; break; } }
+  pick.held = CFG.HoldCap; pick.heldFlash = 0.35;
+  dbg.itemsEmitted++;
+}
+
+function fire(car, angle){
+  if (state.finalPhase) return false;              // 最后 20s 禁攻击：发射失效
+  if (car.held <= 0) return false;
+  car.held = 0;
+  const p = toPx(car.s, car.d);
+  const sp = CFG.ProjSpeed*CFG.PX_PER_M;
+  projectiles.push({
+    x:p.x, y:p.y, vx:Math.cos(angle)*sp, vy:Math.sin(angle)*sp,
+    dist:0, maxDist:CFG.ProjRange*CFG.PX_PER_M, owner:car, dead:false
+  });
+  return true;
+}
+function updateProjectiles(dt, now){
+  const hitR = CFG.ProjHitR*CFG.PX_PER_M;
+  for(let i=0;i<projectiles.length;i++){
+    const p=projectiles[i];
+    if(p.dead) continue;
+    p.x += p.vx*dt; p.y += p.vy*dt; p.dist += Math.hypot(p.vx,p.vy)*dt;
+    if(p.dist>=p.maxDist){ p.dead=true; continue; }
+    for(let j=0;j<cars.length;j++){
+      const c=cars[j];
+      if(c===p.owner || c.finished) continue;
+      const q=toPx(c.s,c.d);
+      if(Math.hypot(q.x-p.x, q.y-p.y) <= hitR){
+        on_hit(p.owner, c, CFG.ItemDamage, now);
+        p.dead=true;
+        if(c===cars[state.playerIdx]) state.camPush=Math.max(state.camPush,0.45);
+        playHitSfx();
+        break;
+      }
+    }
+  }
+  projectiles = projectiles.filter(function(p){ return !p.dead; });
+}
+
+/* =====================================================================
+   主动技能（Q）：四车共用同一底盘，技能只改上述已定义字段
+   ===================================================================== */
+function useActive(car, now){
+  if (now < car.cdUntil) return;
+  if (now < car.immune_until) return;   // 免疫期技能不产生命中事件，也不进 CD（S2 §5.1）
+  const k=car.cls.key;
+  if(k==='truck'){
+    if(state.finalPhase) return;        // 终局禁攻击：撞击属于攻击
+    let target=null;
+    for(let i=0;i<cars.length;i++){
+      const o=cars[i];
+      if(o===car) continue;
+      if(o.s>car.s && o.s-car.s<=CFG.RamRange && Math.abs(o.d-car.d)<3.0){ target=o; break; }
+    }
+    if(target){
+      const rel=Math.abs(car.v-target.v);
+      const dmg=clamp(CFG.RamDamageBase*(1+rel/20), CFG.RamDamageMin, CFG.RamDamageMax);
+      on_hit(car,target,dmg,now);       // 所有撞击命中一律走 on_hit，吃递减与免疫
+      target.vPush += 1.5;
+    }
+  } else if(k==='plane'){
+    car.dashUntil = now + CFG.DashSeconds;   // 挂 ① 层，不改 ④
+  } else if(k==='sub'){
+    car.underwater = !car.underwater;        // 本切片不做海路，A3 只切换可见性状态
+    if(!car.underwater) car.trail.length=0;
+  } else if(k==='racer'){
+    car.shield_until = now + CFG.ShieldSeconds;
+  }
+  car.cdUntil = now + car.cls.activeCD;
+  car.heldFlash = Math.max(car.heldFlash,0.2);
+}
+
+/* =====================================================================
+   【硬约束 1 / 2 / 3 —— 代码注释版，页面说明见 H 帮助面板】
+   1. 磨墙不产生 on_hit、不进 hit_log、不扣血，掉速是唯一代价。
+      理由：持续接触若每帧触发命中事件，会污染「受害者键聚合」的 6s 递减窗口
+      —— 环境伤害把窗口吃满后，真正的集火反而按 50% 结算却没人集火，集火防线
+      （R3）被环境噪声废掉。P2「每条路都付代价」由掉速承担，不用扣血。
+      注意：updateCarPhysics 的磨墙分支里绝对没有 on_hit 调用；障碍是「离散碰撞」
+      另一类事件，才按 CFG.EnvDamage 走 on_hit（见 resolveObstacles）。
+   2. 与「车-车挤压」的反馈严格分离。
+      车-墙摩擦 ＝ 方向性火花（向后拖尾）+ 掉速；
+      车-车挤压 ＝ 车体侧倾 + 连续震频。
+      两套粒子 / 音效通道各自独立函数，不许共用：
+        spawnGrindSpark / drawGrindSparks / playGrind    （车-墙）
+        drawSqueezeFeedback / playSqueeze                （车-车，零粒子）
+      否则玩家分不清「我被挤了」还是「我蹭墙了」——两条正确规则在交互处叠加，
+      必须拆开定责。
+      灰盒切片：挤压暂为零粒子（侧倾+震频），第三项粒子通道待 Unity 补回，
+      见 art-bible 附录 C.8。这是原型简化偏差，不是设计结论；R-26 三项表现
+      （侧倾 4°／45°/s 封顶 + 连续震频 12Hz±2 + 车身侧缘连续低幅高频摩擦
+      粒子 20/s 封顶，侧向、不沿 -s 拖尾）在正式实现里必须同时在场，仍须与
+      车-墙火花保持独立函数／独立常量（20/s ≠ 18/s）／独立音效。
+      —— 注意「不许共用」≠「不许有」：R-26 是 L+ 正式机制，不是灰盒的结论。
+   3. 封顶饱和（PR-2「表演可以撒谎，但必须留字据」，附录 C.3.2）：
+      发射率恒定封顶（每车 18/s、全场 72/s）；建立期 T_ramp=0.20s 由「持续
+      接触态已持续时间」驱动，E(t)=18×min(1,t_c/0.20)；t_c≥0.20s 后恒 18/s，
+      完全不读接触深度（d / excess）、不读车速（v）。
+      超过 T_ramp 后唯一继续变化的量 ＝ 火花发射总时长（＝接触态总时长，无上限）；
+      强度／密度／亮度／色相／单粒子参数（寿命、初速、扩散角、尾迹）全部冻结。
+      「忠实会破坏什么」三条字据：
+        ① 忠实映射会把「蹭得更狠」如实翻译成「火花更猛」，把玩家注意力从
+           「入弯太快→我在磨墙→我在掉速→下个弯该松油门」拽到特效上，甚至
+           诱发「蹭得更狠看火花」；更坏的是「火花更猛」被读成「这段弯更刺激／
+           更值」，把「代价」演成「奖励」，触碰 PR-1「更快不可视」。
+        ② 忠实映射会暴露穿插深度的未标定不确定性：4m 走廊 overlap_tol=0.50、
+           最坏互穿 0.500m 是既有 [实测] 背景，而车-墙接触深度是 [推断]、
+           完全没有标定；让强度随深度走，等于把未标定量放大成玩家能精确读到
+           的亮度，后来人分不清是深度变了还是美术调了。
+        ③ 与车速完全解耦是「第二处有意撒谎」（附录 C.4.5）：牺牲「真实磨擦碎屑
+           初速随车速增长」的物理忠实。否则车速成为另一个强度输入口，给封顶开
+           后门——「蹭得更狠不许更猛」却「开得更快可以更猛」，字据当场作废；
+           且高速绑定火花更亮＝速度奖励语义，直接触碰 PR-1。
+      渐进起手 0.20s 是「持续磨墙 ≠ 撞墙爆炸」的第一道保险：若接触一成立就
+      满屏 18/s，视觉上正是一次「爆发」，会被读成撞墙爆炸。
+      ⚠️ 本封顶的唯一理由＝上述三条字据，不是性能／粒子预算／工期／设备负载。
+   ---------------------------------------------------------------------
+   contact_target ∈ {Wall, Vehicle, Prop}（附录 C.3.1：§11 已登记的
+   「持续接触态 ↔ 碰撞事件分离」接口多出的一个字段，不是第二个接口）。
+   灰盒三条通道各持自己的目标标签，不退化成共用一个布尔：
+     car.grindTarget   → Wall    ：外侧车身 ∩ 外侧护栏的持续接触态，唯一喂火花
+     car.squeezeTarget → Vehicle ：4m 走廊内被另一台车侧向顶的持续接触态
+     car.propTarget    → Prop    ：resolveObstacles 的离散碰撞（一次性、非持续态）
+   Vehicle / Prop 不产生任何火花粒子；emitGrindSparks 只在 Wall 时被调用。
+   ===================================================================== */
+/* 显式枚举：三值都落在真实代码路径上，不是共用一个布尔，也不是伪造的空壳。 */
+const CONTACT_TARGET = Object.freeze({ Wall:'Wall', Vehicle:'Vehicle', Prop:'Prop' });
+
+/* -s 方向 = 赛道局部切向的负方向，不是车头朝向的负方向（附录 C.4.2）。
+   本灰盒赛道已「拉直」成横轴 s 的赛道带，故屏幕 -x 严格等价 -s（局部切向），
+   保留现有屏幕 -x 实现即可。
+   ★ 严禁改用车辆朝向：转向不足时车头已指向弯内、车却在向外侧滑，用朝向做
+     拖尾会把火花指向弯内，正好把「没转过来」演反。同理禁止 +s（向前）分量
+     （会被读成加速／PR-1）与向上(z)分量（§6.3 禁上升粒子、会与 V-5 光柱串味）。
+     俯视 2D 无 z 轴，向上分量恒为 0；侧向只有 12° 锥内分量 + 1.2m/s 向外。 */
+function spawnGrindSpark(car, side, center, hw){
+  /* 发射点 = 外侧车身与护栏接触段中点（外侧轮廓 ∩ 护栏），不是车头、不是车中心 */
+  const dContact = center + side*hw;
+  const contact = toPx(car.s, dContact);
+  const life = lerp(CFG.SparkLifeMin, CFG.SparkLifeMax, state.rng());
+  /* 12° 锥半角内的粒子级伪随机；主方向 -s 恒定 6.0 m/s，与车速完全解耦。
+     旧版 (0.7+rng*0.6) / (rng-0.5)*6 这类无角度定义的抖动已彻底删除。 */
+  const ang = (state.rng()*2-1) * CFG.SparkConeHalfDeg * Math.PI/180;
+  const vm  = CFG.SparkBackSpeed;                                  // 6.0 m/s，恒定
+  const vAlongS  = -Math.cos(ang)*vm;                               // 沿 -s（屏幕 -x）
+  const vOutward =  Math.sin(ang)*vm + side*CFG.SparkOutSpeed;      // 侧向（屏幕 y）+ 轻微向外
+  sparks.push({
+    x:contact.x, y:contact.y,
+    vx:vAlongS*CFG.PX_PER_M, vy:vOutward*CFG.PY_PER_M,
+    age:0, life:life
+  });
+  dbg.sparkEmitted++; dbg.lastFrameSparks++; car.sparkThisFrame++;
+}
+
+/* 车-墙摩擦：火花通道（唯一）。只由「持续接触态 contact_target=Wall」驱动；
+   发射率随接触态时长渐进到 18/s 后恒定，完全不读接触深度、不读车速。
+   签名里刻意不再收 excess：深度只留在 updateCarPhysics 的接触判定里。 */
+function emitGrindSparks(car, dt, side, center, hw){
+  const want = car.grind;                        // 只看持续接触态布尔
+  if(!want){ car.sparkAcc = 0; return; }         // 不磨墙时清空额度，避免起磨瞬间爆发
+  if(!state.sparksOn) return;
+  /* 水下／下潜抑制：由 underwater 状态驱动，不是位置更新、不是接触事件
+     （附录 C.4.6 状态源纪律，类比 V-5「下潜即熄灭光柱」）。
+     已有粒子按各自 T_life 自然消亡，不硬切，避免读成「一串撞击」。 */
+  if(car.underwater){ car.sparkAcc = 0; return; }
+  /* d 只作状态校验，不作任何强度 / 时长输入（附录 C.4.1）：
+     sign(d-center) 必须与曲率定的外侧 side 一致，且 |d-center| ≥ d_min=0.15m；
+     否则这一刻不是转向不足（可能被挤、反向修正或已回正），抑制火花。 */
+  const local = car.d - center;
+  if(Math.abs(local) < CFG.SparkDMin || Math.sign(local) !== Math.sign(side)){
+    car.sparkAcc = 0; return;
+  }
+  /* 建立期 E(t)=18×min(1,t_c/0.20)，t_c = car.grindTime（持续接触态已持续时间）。
+     ≥T_ramp 后恒 18/s；此后唯一继续变化的量是「发射总时长」（＝接触态总时长），
+     强度／密度／亮度／色相／单粒子参数全部冻结。
+     ★ 此处绝不读 excess / car.grindDepth / car.d 作强度，也绝不读 car.v。 */
+  const rate = CFG.SparkRateCap * Math.min(1, car.grindTime/CFG.SparkRampSeconds);
+  car.sparkAcc += dt*rate;                 // 不设 1 的上限：dt=1/60 时 18/s 才能真的落到 18/s
+                                          // 起磨不爆发已由 want=false 时清空 sparkAcc 保证
+  while(car.sparkAcc >= 1){
+    car.sparkAcc -= 1;
+    if(state.sparkGlobalAcc < 1) break;                  // 全场额度在 step() 里按 dt 统一累加
+    state.sparkGlobalAcc -= 1;
+    spawnGrindSpark(car, side, center, hw);
+  }
+}
+
+function updateSparks(dt){
+  for(let i=0;i<sparks.length;i++){
+    const p=sparks[i];
+    p.age += dt; p.x += p.vx*dt; p.y += p.vy*dt;
+    p.vx *= (1-1.8*dt); p.vy *= (1-1.8*dt);
+  }
+  sparks = sparks.filter(function(p){ return p.age < p.life; });
+}
+
+/* =====================================================================
+   反馈通道：两套独立音效合成（默认关闭，可在调试面板打开对照）
+   playGrind  = 短噪声爆裂（车-墙摩擦）
+   playSqueeze= 低频方波脉冲（车-车挤压）
+   两者不同函数、不同振荡器、不同包络 —— 不共用同一套音效通道
+   ===================================================================== */
+/* =====================================================================
+   本地成绩存档（全项目唯一平台边界：只有 loadBest/saveBest 碰 localStorage）
+   ===================================================================== */
+function loadBest(){
+  try{
+    const raw = localStorage.getItem(CFG.BestKey);
+    if(!raw) return null;
+    const o = JSON.parse(raw);
+    if(!o || o.version!==1 || !Array.isArray(o.samples)) return null;
+    return o;
+  }catch(e){ return null; }          // file:// 隐私模式 / 禁用存储时静默降级
+}
+function saveBest(rec){
+  try{ localStorage.setItem(CFG.BestKey, JSON.stringify(rec)); return true; }
+  catch(e){ return false; }
+}
+
+/* =====================================================================
+   音频解锁 + 竞争状态音（复用既有 WebAudio 通道，不新建音频系统）
+   ===================================================================== */
+function ensureAudio(){
+  if(!state.audioOn) return null;
+  let ac = state.audio;
+  if(!ac){
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return null;
+      ac = new AC(); state.audio = ac;
+    }catch(e){ state.audio=null; return null; }
+  }
+  /* 覆盖旧版缓存短路：关掉音效再打开时旧 context 可能仍 suspended，
+     只放在 new AC() 分支里的 resume() 会被短路挡掉，这里无条件补一次 */
+  try{
+    if(ac.state === 'suspended'){ const q = ac.resume(); if(q && q.catch) q.catch(function(){}); }
+  }catch(e){}
+  return ac;
+}
+function unlockAudio(){
+  state.audioUnlocked = true;
+  const ac = ensureAudio();
+  /* 开跑信号：三条开局路径统一在这里发，覆盖 suspended→running 的异步解锁 */
+  function fireStart(){ playCompete('start'); }
+  if(ac && ac.state==='suspended'){
+    try{ const q=ac.resume(); if(q && q.then) q.then(fireStart, function(){}); }catch(e){ fireStart(); }
+  } else { fireStart(); }
+  return ac;
+}
+function audioReady(){
+  if(!state.audioOn || !state.audioUnlocked) return null;
+  const ac = ensureAudio();
+  return (ac && ac.state === 'running') ? ac : null;   // running 之前静默丢弃、不排队
+}
+/* 单一竞争音入口：换位 up/down、逼近 near、开跑 start、破纪录 best、结算 finish。
+   带短淡出（禁硬切）；并发靠 0.04s 节流，物理音各自节流仍在，超限时优先保住竞争音。 */
+function playCompete(kind){
+  const ac = audioReady(); if(!ac) return;
+  const now = ac.currentTime;
+  if(now - state.competeAt < 0.04) return;
+  state.competeAt = now;
+  try{
+    let f0=440, f1=560, dur=0.16, type='sine', gain=0.045;
+    if(kind==='up'){ f0=520; f1=760; }
+    else if(kind==='down'){ f0=440; f1=250; }
+    else if(kind==='near'){ f0=900; f1=780; dur=0.10; gain=0.035; type='triangle'; }
+    else if(kind==='best'){ f0=520; f1=980; dur=0.28; gain=0.055; }
+    else if(kind==='finish'){ f0=300; f1=150; dur=0.42; gain=0.06; type='sawtooth'; }
+    else if(kind==='start'){ f0=420; f1=680; dur=0.16; }
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.type=type; o.frequency.setValueAtTime(f0,now);
+    o.frequency.exponentialRampToValueAtTime(Math.max(f1,1),now+dur);
+    g.gain.setValueAtTime(0.0001,now);
+    g.gain.exponentialRampToValueAtTime(gain,now+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+dur);
+    o.connect(g); g.connect(ac.destination); o.start(now); o.stop(now+dur+0.02);
+  }catch(e){}
+}
+function playGrind(){
+  const ac=audioReady(); if(!ac) return;
+  const now=ac.currentTime;
+  if(now - state.grindSfxAt < 0.18) return;   // 节流
+  state.grindSfxAt=now;
+  try{
+    const len=Math.floor(ac.sampleRate*0.06), buf=ac.createBuffer(1,len,ac.sampleRate);
+    const ch=buf.getChannelData(0);
+    for(let i=0;i<len;i++) ch[i]=(Math.random()*2-1)*(1-i/len);
+    const src=ac.createBufferSource(); src.buffer=buf;
+    const bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=2600; bp.Q.value=0.8;
+    const g=ac.createGain(); g.gain.value=0.055;
+    src.connect(bp); bp.connect(g); g.connect(ac.destination); src.start(now); src.stop(now+0.06);
+  }catch(e){}
+}
+function playSqueeze(){
+  const ac=audioReady(); if(!ac) return;
+  const now=ac.currentTime;
+  if(now - state.squeezeSfxAt < 0.22) return;
+  state.squeezeSfxAt=now;
+  try{
+    const o=ac.createOscillator(); o.type='square'; o.frequency.value=68;
+    const g=ac.createGain(); g.gain.setValueAtTime(0.0001,now);
+    g.gain.exponentialRampToValueAtTime(0.045,now+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.13);
+    o.connect(g); g.connect(ac.destination); o.start(now); o.stop(now+0.14);
+  }catch(e){}
+}
+function playHitSfx(){
+  const ac=audioReady(); if(!ac) return;
+  try{
+    const now=ac.currentTime, o=ac.createOscillator(); o.type='triangle';
+    o.frequency.setValueAtTime(420,now); o.frequency.exponentialRampToValueAtTime(150,now+0.12);
+    const g=ac.createGain(); g.gain.setValueAtTime(0.05,now);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.13);
+    o.connect(g); g.connect(ac.destination); o.start(now); o.stop(now+0.14);
+  }catch(e){}
+}
+
+/* =====================================================================
+   共享物理：玩家与 AI 走完全同一条路径。
+   ★ AI 不免疫 understeer / 磨墙 / 火花 —— 不给任何 AI 分支豁免（本轮硬需求）
+   ===================================================================== */
+function updateCarPhysics(car, dt, now, input){
+  const cls = car.cls;
+  const st = speedStack(car, now);
+  car.stack = st;
+
+  /* --- 纵向：软限速收敛而非钳制 ---
+     grindingLast = 上一帧的磨墙态。持续贴护栏时摩擦压过引擎推力：
+     若不做这一条，全油门每帧 +a_drive·dt 会正好抵消磨墙 −GrindDecel·dt，
+     「掉速是唯一代价」退化成零代价，速度永远卡在 18.85，自检 T2 会抓到。
+     刹车仍然生效（不抑制 input.throttle<0），玩家可主动脱离磨墙。 */
+  const grindingLast = car.grind;
+  const target = st.v4;
+  let thrustGain = 1.0;
+  if(cls.key==='truck' && car.v < 0.60*st.v1) thrustGain = 1.25;  // P1 压舱：改推力不改速度，不进栈
+  if (car.vDrive > target + 1e-6){
+    /* 惩罚生效时 v4 下降：以 a_pen=12 m/s² 收敛（≈0.64s，长于 0.3–0.5s 冲击观感窗） */
+    car.vDrive = Math.max(target, car.vDrive - CFG.APen*dt);
+  } else if (input.throttle < 0){
+    car.vDrive = Math.max(0, car.vDrive - CFG.ABrake*(-input.throttle)*dt);
+  } else if (grindingLast){
+    /* 磨墙摩擦压过引擎：本帧不加速；净掉速由下方护栏接触分支施加 */
+  } else if (input.throttle > 0){
+    car.vDrive = Math.min(target, car.vDrive + CFG.ADrive*thrustGain*input.throttle*dt);
+  } else {
+    car.vDrive = Math.max(0, car.vDrive - CFG.ACoast*dt);
+  }
+  /* 被推被动超速：超出量以 τ=0.5s 衰减回上限（S1 §5.1 ②），不解除惩罚 */
+  car.vPush *= Math.exp(-dt/CFG.PassiveOverTau);
+  car.v = car.vDrive + car.vPush;
+
+  /* --- 选路 / 转向 --- */
+  if(!car.finished){
+  if (car.s >= FORK_A && car.s < FORK_B && !car.routeLocked){
+    /* 广场段：允许把车摆到 ±20m，玩家用左右键选带 */
+    car.laneOffset = clamp(car.laneOffset + input.steer*CFG.SteerRate*dt,
+                           -(CFG.ForkPlazaHalf-CFG.CarHalfW), CFG.ForkPlazaHalf-CFG.CarHalfW);
+  }
+  if (!car.routeLocked && car.s >= FORK_B){
+    /* 越过岔路点：按当前 d 就近锁路线（AI 用局内固定随机的既定选择） */
+    let best=0, bd=1e9;
+    for(let r=0;r<3;r++){
+      const dd=Math.abs(car.d - CFG.RouteCenters[r]);
+      if(dd<bd){ bd=dd; best=r; }
+    }
+    car.route = car.isPlayer ? best : car.aiRoute;
+    const hw=CFG.RouteHalf[car.route];
+    car.laneOffset = clamp(car.d - CFG.RouteCenters[car.route], -(hw-CFG.CarHalfW), hw-CFG.CarHalfW);
+    car.routeLocked = true;
+  }
+  if (car.s > FORK_D && car.routeLocked){
+    car.route=0; car.routeLocked=false;
+    car.laneOffset = clamp(car.d, -(CFG.MainHalfW-CFG.CarHalfW), CFG.MainHalfW-CFG.CarHalfW);
+  }
+  if (car.routeLocked || car.s>=FORK_B){
+    const hw=halfWidthAt(car.s,car.route);
+    car.laneOffset = clamp(car.laneOffset + input.steer*CFG.SteerRate*dt, -(hw-CFG.CarHalfW), hw-CFG.CarHalfW);
+  } else if (car.s < FORK_A){
+    const lim=CFG.MainHalfW-CFG.CarHalfW;
+    car.laneOffset = clamp(car.laneOffset + input.steer*CFG.SteerRate*dt, -lim, lim);
+  }
+  }
+  const center = centerAt(car.s, car.route);
+  car.dBase += (center + car.laneOffset - car.dBase) * Math.min(1, CFG.SteerFollow*dt);
+
+  /* --- 横向：过弯 understeer → 被推向外侧 --- */
+  const k = kappaSigned(car.s);
+  const kAbs = Math.abs(k);
+  car.lastKappa = kAbs;
+  const aReq = car.v*car.v*kAbs;                    // 所需向心加速度 v²·κ(s)
+  let driftTarget = 0;
+  if (aReq > CFG.ALatMax){
+    /* 所需向心加速度超过可用横向加速度上限 → 跟不上曲率、被推向弯道外侧 */
+    const outward = -Math.sign(k || 1);
+    driftTarget = outward * Math.min((aReq-CFG.ALatMax)*CFG.DriftGain, CFG.MaxDrift);
+    /* T2-12 反打：玩家朝弯心（与 outward 相反方向）打方向，按 |steer| 削减外漂，
+       把转向权限还给玩家——「转对方向」能明显把车拉回线内。封顶不超过 MaxDrift。 */
+    if (Math.sign(input.steer) === -outward && Math.abs(input.steer) > 1e-3){
+      driftTarget -= outward * Math.min(Math.abs(input.steer) * CFG.CounterSteerDrop, CFG.MaxDrift);
+    }
+    driftTarget = clamp(driftTarget, -CFG.MaxDrift, CFG.MaxDrift);
+  }
+  /* a_req 回落后 driftTarget→0，d 自然回正 */
+  car.drift += (driftTarget - car.drift) * Math.min(1, CFG.DriftLerp*dt);
+  car.d = car.dBase + car.drift;
+
+  /* --- 护栏接触：磨墙态 ---
+     接触判定 + 「贴墙持续摩擦」保持：一旦贴上，即便瞬时 κ 回落也持续摩擦，
+     直到速度降到 GrindReleaseV（≈ 该弯可干净通过的速度）或保持时长用尽。
+     这是「贴到护栏持续摩擦」的灰盒简化，参数 [推断]，不是撞墙爆炸。 */
+  const hw = halfWidthAt(car.s, car.route);
+  const limit = hw - CFG.CarHalfW;
+  const local = car.d - center;
+  const contact = Math.abs(local) > limit;
+  /* contactSide：护栏物理接触侧，只用于把 d 钉在接触点；不得被选边逻辑改写。 */
+  let excess = 0, contactSide = car.grindSide || 1;
+  if (contact){
+    excess = Math.abs(local) - limit;
+    contactSide = Math.sign(local) || 1;
+    car.grindHold = CFG.GrindHoldSeconds;   // 重新计时（持续接触）
+    car.grindSide = contactSide;
+  }
+  /* side：火花发射侧，由带符号曲率定 side = -sign(κ)（附录 C.4.1，选边不由 d 定）。
+     ★ 选边只影响火花发射侧 / 发射点，不改车体位置：车体仍由 contactSide 钉在
+       真实接触点。d 的符号只在 emitGrindSparks 里作状态校验，不作强度输入。 */
+  const side = -Math.sign(k) || 1;
+  const keepGrinding = car.grindHold > 0 && car.v > CFG.GrindReleaseV && kAbs > 1e-5;
+  const grinding = contact || keepGrinding;
+  if (grinding){
+    contactSide = car.grindSide || contactSide;
+    /* 贴住护栏：把 d 钉在接触点，并让 drift 与之自洽，脱离后能自然回正 */
+    car.d = center + contactSide*limit;
+    car.drift = car.d - car.dBase;
+    car.grind = true; car.grindSide = contactSide;
+    car.grindDepth = Math.max(excess, 0.6);   // 名义深度，仅供调试面板读数，不作火花强度输入
+    car.grindTime += dt;
+    car.grindTarget = CONTACT_TARGET.Wall;      // 持续接触态目标类型（唯一喂火花）
+    /* ★ 硬约束 1：磨墙不产生 on_hit / 不进 hit_log / 不扣血，掉速是唯一代价。
+       此处严禁出现 on_hit(...) —— 持续接触每帧触发命中会污染 6s 递减窗口，
+       使真正集火按 50% 结算却无人集火，R3 集火防线被环境噪声废掉。 */
+    car.vDrive = Math.max(0, car.vDrive - CFG.GrindDecel*dt);
+    car.v = car.vDrive + car.vPush;
+    dbg.grindFrames++;
+    if(dbg.grindSnapHp===null){ dbg.grindSnapHp = car.hp; dbg.grindSnapLog = car.hit_log.length; }
+    dbg.grindDeltaHp = car.hp - dbg.grindSnapHp;
+    dbg.grindDeltaLog = car.hit_log.length - dbg.grindSnapLog;
+    playGrind();                                   // 车-墙音效通道（独立）
+  } else {
+    car.grind=false; car.grindDepth=0; car.grindTime=0; car.grindHold=0;
+    car.grindTarget = null;
+  }
+  if (car.grindHold>0) car.grindHold -= dt;
+  /* 火花发射（车-墙专用通道；只在 contact_target==='Wall' 时调用，
+     建立期由接触态时长驱动，完全不读接触深度 / 不读车速） */
+  if(car.grindTarget === CONTACT_TARGET.Wall) emitGrindSparks(car, dt, side, center, hw);
+
+  /* --- 推进：分叉内按路线长度换算（窄近路 2× / 宽远路 300/360×） --- */
+  const pf = progressFactor(car.s, car.route);
+  car.s += car.v * pf * dt;
+
+  /* --- 反卡死：G3 口径，读真实速度而非速度上限；保证 4 车都跑完全程 --- */
+  if (car.v < 1.5) car.stuckTimer += dt; else car.stuckTimer = 0;
+  if (car.stuckTimer > 2.0){
+    car.vDrive = Math.max(car.vDrive, CFG.MinCrawl);
+    car.stuckTimer = 0;
+  }
+  if (car.s >= CFG.TrackLength){
+    car.s = CFG.TrackLength;
+    if(!car.finished){
+      car.finished=true; car.finishTime=now;
+      /* 冲线后把车停到路边（按 idx 交替靠左/右墙），避免堵在终点线中央挡住后车冲线，
+         导致后车完赛率卡在 99.9%。同时刹停、清掉残余推进速度。 */
+      car.laneOffset = (car.idx % 2 ? 1 : -1) * (CFG.MainHalfW - CFG.CarHalfW);
+      car.drift = 0; car.vDrive = 0; car.v = 0; car.vPush = 0;
+    }
+  }
+
+  /* --- 状态计时 --- */
+  if(car.heldFlash>0) car.heldFlash-=dt;
+  if(car.underwater){
+    car.trail.push({s:car.s, t:now});
+    while(car.trail.length && now-car.trail[0].t > CFG.SubTrailSeconds) car.trail.shift();
+  }
+  if(car.ringUntil>0 && now>car.ringUntil) car.ringUntil=-1;
+}
+
+/* =====================================================================
+   离散障碍（窄近路 4 个，间距 18 窄路米 = 36 全局米）
+   注意：障碍是「离散碰撞」，与「持续磨墙」是两类事件；它按 CFG.EnvDamage
+   走 on_hit（自伤），但不会每帧触发，因此不违反硬约束 1 的污染论证。
+   ===================================================================== */
+function obstacleList(){
+  const arr=[];
+  for(let i=0;i<CFG.ObstacleCount;i++){
+    arr.push({ s: FORK_B + 60 + i*CFG.ObstacleSpacingGlobal,
+               d: (i%2===0 ? CFG.ObstacleOffsetD : -CFG.ObstacleOffsetD) });
+  }
+  return arr;
+}
+const OBSTACLES = obstacleList();
+function resolveObstacles(car, now){
+  if(car.route!==1 || !inFork(car.s)) return;
+  const center = centerAt(car.s, car.route);
+  for(let i=0;i<OBSTACLES.length;i++){
+    const o=OBSTACLES[i], key='o'+i;
+    if(car.hitObstacles[key]) continue;
+    if(Math.abs(car.s-o.s) < 2.2 && Math.abs((car.d-center)-o.d) < CFG.ObstacleHitHalfD){
+      car.hitObstacles[key]=true;
+      /* contact_target=Prop：离散碰撞事件的标签（一次性、有起止帧、带冲量），
+         按附录 C.8 第 5 条它进 hit_log / R-23；它不是持续接触态，故不喂火花。 */
+      car.propTarget = CONTACT_TARGET.Prop;
+      car.vDrive *= CFG.ObstacleSlow;
+      on_hit(car, car, CFG.EnvDamage, now);   // 离散环境自伤，非持续磨墙
+      if(car.isPlayer) state.camPush=Math.max(state.camPush,0.5);
+    }
+  }
+}
+
+/* =====================================================================
+   车-车接触：4m 走廊强制 overlap_tol=0.50 互穿容差、走廊内不许完成超车
+   挤压反馈 = 车体侧倾 + 连续震频（零粒子），与磨墙火花通道严格分离
+   ===================================================================== */
+function resolveContacts(now, dt){
+  for(let i=0;i<cars.length;i++){
+    cars[i].squeeze=false; cars[i].squeezeSide=0; cars[i].squeezeTarget=null;
+  }
+  /* 全场是否有人在磨墙：用于自测快照清理 */
+  state.anyGrind = cars.some(function(c){ return c.grind; });
+  if(!state.anyGrind){ dbg.grindSnapHp=null; dbg.grindSnapLog=null; dbg.grindDeltaHp=0; dbg.grindDeltaLog=0; }
+
+  for(let i=0;i<cars.length;i++) for(let j=i+1;j<cars.length;j++){
+    const a=cars[i], b=cars[j];
+    if(Math.abs(a.s-b.s) > CFG.CarLen) continue;
+    if(Math.abs(a.d-b.d) > 2*CFG.CarHalfW) continue;
+    /* 已冲线的车停到路边且不再参与挤压/挤推，避免挡住后车冲线（完赛率卡 99.9%） */
+    if(a.finished || b.finished) continue;
+    const front = a.s>b.s ? a : b, rear = a.s>b.s ? b : a;
+    const side = Math.sign(a.d-b.d) || 1;
+    a.squeeze=true; b.squeeze=true;
+    /* contact_target=Vehicle：车-车持续接触态，只喂 drawSqueezeFeedback，
+       不喂 emitGrindSparks（R-26 与车-墙火花严格通道分离） */
+    a.squeezeTarget=CONTACT_TARGET.Vehicle; b.squeezeTarget=CONTACT_TARGET.Vehicle;
+    a.squeezeSide=-side; b.squeezeSide=side;
+    a.squeezeTime+=dt; b.squeezeTime+=dt;
+    /* 窄近路走廊：不许完成超车 —— 后车只能缩短间距，挤压是负收益 */
+    const narrow = (a.route===1 && b.route===1 && inFork(a.s) && inFork(b.s));
+    const minGap = CFG.CarLen*(1 - CFG.OverlapTol*0.5);
+    if(front.s - rear.s < minGap){
+      if(narrow) rear.s = front.s - minGap;
+      else rear.s = front.s - minGap*0.75;
+      rear.vDrive *= 0.985;
+      front.vPush = Math.min(front.vPush + 0.8, 3.0);
+    }
+    /* 侧向顶开：允许 overlap_tol 比例的互穿，不硬分离（4m 下必然穿插） */
+    const overlap = 2*CFG.CarHalfW - Math.abs(a.d-b.d);
+    const tol = CFG.OverlapTol * 2*CFG.CarHalfW;
+    if(overlap > tol){
+      const push = (overlap-tol)*0.15;
+      a.dBase += side*push; b.dBase -= side*push;
+    }
+    if(a.isPlayer || b.isPlayer) playSqueeze();  // 车-车音效通道（独立，零粒子）
+  }
+}
+
+/* =====================================================================
+   AI（最小可用）：共用物理、会 understeer、会磨墙出火花、不许免疫
+   ===================================================================== */
+function aiInput(car, now){
+  const kAbs = kappaAt(car.s);
+  const aReq = car.v*car.v*kAbs;
+  let throttle = 1;
+  /* 过弯会减速但「不一定够」：aiCornerMargin>1 时仍会 understeer → 磨墙 → 火花。
+     ★ 没有给 AI 任何豁免：与玩家共用 updateCarPhysics。 */
+  if (aReq > CFG.ALatMax*car.aiCornerMargin) throttle = -1;
+  let steer = 0;
+  /* 选路：头名倾向宽远路（安全），落后者倾向窄近路（赌），带局内固定随机，不许查表必然 */
+  if(car.s > FORK_A - 90 && !car.routeLocked && !car.aiRouteDecided){
+    let r;
+    const u=state.rng();
+    if(car.rank===1)      r = u<0.60 ? 2 : (u<0.88 ? 0 : 1);   // 头名：宽远路为主
+    else if(car.rank>=3)  r = u<0.60 ? 1 : (u<0.88 ? 0 : 2);   // 落后者：窄近路为主
+    else                  r = u<0.40 ? 0 : (u<0.70 ? 2 : 1);
+    car.aiRoute=r; car.aiRouteDecided=true;
+  }
+  if(car.s > FORK_A-90 && car.s < FORK_B){
+    const target = CFG.RouteCenters[car.aiRoute];
+    steer = clamp((target - car.d)*0.22, -1, 1);   // 摆到目标带
+  } else if(car.s > FORK_B && car.s < FORK_C){
+    steer = clamp((0 - car.laneOffset)*0.12, -1, 1); // 窄路内不强行超车，沿带心走
+  } else {
+    steer = clamp((0 - car.d)*0.10, -1, 1);
+  }
+
+  /* 道具：有就朝射程内目标发射；hard 打头名、easy 打最近前车。
+     ★ 不把 AI 设成「天然不集火」来假装解决 R3 —— hard 明确打头名。 */
+  if(car.held>0 && !state.finalPhase && now>=car.nextFire){
+    let targets = cars.filter(function(o){ return o!==car && !o.finished; });
+    let t=null;
+    if(state.aiDiff==='hard') t = state.leader && state.leader!==car ? state.leader : null;
+    else if(state.aiDiff==='easy'){
+      let bd=1e9;
+      for(let i=0;i<targets.length;i++){ const dd=targets[i].s-car.s; if(dd>0 && dd<bd){ bd=dd; t=targets[i]; } }
+    } else {
+      t = targets.length ? targets[Math.floor(state.rng()*targets.length)] : null;
+    }
+    if(t){
+      const p=toPx(car.s,car.d), q=toPx(t.s,t.d);
+      const dist=Math.hypot(q.x-p.x,q.y-p.y);
+      if(dist < CFG.ProjRange*CFG.PX_PER_M){
+        const ang=Math.atan2(q.y-p.y,q.x-p.x) + (state.rng()-0.5)*2*car.aiAimNoise;
+        if(fire(car,ang)) car.nextFire = now + 0.4;
+      }
+    }
+  }
+
+  /* 技能：CD 好了按情境用 */
+  if(now>=car.cdUntil && now>=car.immune_until){
+    const k=car.cls.key;
+    if(k==='plane' && kAbs<0.006 && car.rank>1) useActive(car,now);
+    else if(k==='truck' && !state.finalPhase){
+      let found=false;
+      for(let i=0;i<cars.length;i++){ const o=cars[i];
+        if(o!==car && o.s>car.s && o.s-car.s<=CFG.RamRange && Math.abs(o.d-car.d)<3){ found=true; break; } }
+      if(found) useActive(car,now);
+    }
+    else if(k==='racer' && (car.hp < 0.5*car.cls.hp || (state.huntStage>=2 && car.rank>1))) useActive(car,now);
+    else if(k==='sub' && state.rng()<0.005) useActive(car,now);
+  }
+  return {throttle:throttle, steer:steer};
+}
+
+function playerInput(car, now){
+  const K=state.keys;
+  let throttle = 0, steer = 0;
+  if(K['ArrowUp']||K['KeyW']) throttle = 1;
+  if(K['ArrowDown']||K['KeyS']) throttle = -1;
+  if(now < car.stunUntil) { /* 受击硬直：操控失效 */ }
+  else {
+    if(K['ArrowLeft']||K['KeyA']) steer -= 1;
+    if(K['ArrowRight']||K['KeyD']) steer += 1;
+    steer = clamp(steer,-1,1);
+  }
+  /* 规格同时要求「WASD 左右转向」与「D 调试面板」，D 一字两用：
+     单次按下 D 切换调试面板（keydown 且非 repeat），持续按住 D 仍作为右转向。
+     页面说明里写明这一重叠，不静默改键。 */
+  car.inputThrottle = throttle;
+  return {throttle:throttle, steer:steer};
+}
+
+/* =====================================================================
+   看示范（自动循环）：脚本化驾驶，零外部依赖，循环演示两种过弯手法。
+   ① 全速冲进急弯、不转向 → 被甩向外侧护栏、蹭墙掉速（出火花）
+   ② 进弯前松油门/刹车降到约 13 m/s、并朝弯心打方向 → 干净通过
+   玩家车越过 CFG.DemoLoopS 即由 step() 调 startDemo() 重开，循环往复。
+   ===================================================================== */
+function demoInput(car, now){
+  const s = car.s;
+  const k = kappaSigned(s);
+  const c0 = CFG.Corners[1];   // 第一个急弯（s=760）：演示「全速不转向 → 蹭墙」
+  const c1 = CFG.Corners[3];   // 第二个急弯（s=2050）：演示「松油 + 朝弯心转 → 干净」
+  const inBad = (s > 200 && s < c0.s + c0.len*0.6);
+  /* 默认朝弯心打方向（与 outward 相反）；第一段刻意不打方向，坐实「一直贴墙」 */
+  let steer = inBad ? 0 : clamp(Math.sign(k)*0.9, -1, 1);
+  let throttle = 1;
+  const distGood = c1.s - s;
+  if(!inBad && distGood > -c1.len*0.5 && distGood < 230){
+    /* 临近第二段急弯：速度偏高就松油/刹车，降到约 13 m/s 再给油，走干净线 */
+    if(car.v > 13.5) throttle = -1;
+    else if(car.v > 12.5) throttle = 0;
+    else throttle = 1;
+  }
+  return {throttle:throttle, steer:steer};
+}
+function startDemo(){
+  /* 示范强制用潜艇：让「看示范」直接展示「潜艇在海路加速、陆路不行」这一轮修复点 */
+  const subIdx = CFG.Classes.findIndex(function(c){ return c.key==='sub'; });
+  newMatch(subIdx>=0 ? subIdx : (state.selClass||0));
+  state.demo = true;
+}
+function exitDemo(){
+  state.demo = false;
+  showStart();
+}
+
+/* =====================================================================
+   最后 20s：禁攻击 + 派发停止 + 加速带开放 + 持有道具自动兑换，四事同刻
+   ===================================================================== */
+function enterFinalPhase(now){
+  state.finalPhase=true; state.finalTriggered=true;
+  state.finalBannerUntil = now + 2.2;
+  /* 禁攻击：清掉在途弹丸，且 fire()/撞击 thereafter 直接返回 */
+  projectiles.length = 0;
+  /* 持有道具自动兑换加速（不发射、不结算伤害） */
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i];
+    if(c.held>0){ c.held=0; c.itemBoostUntil = now + CFG.ItemBoostSeconds; }
+  }
+  playFinalSfx();
+}
+function playFinalSfx(){
+  if(state.resultSfxPlayed) return;      // 与结算音互斥，别连着响两声
+  const ac=audioReady(); if(!ac) return;
+  try{
+    const now=ac.currentTime, o=ac.createOscillator(); o.type='sine';
+    o.frequency.setValueAtTime(300,now); o.frequency.linearRampToValueAtTime(620,now+0.35);
+    const g=ac.createGain(); g.gain.setValueAtTime(0.05,now);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.4);
+    o.connect(g); g.connect(ac.destination); o.start(now); o.stop(now+0.42);
+  }catch(e){}
+}
+
+/* =====================================================================
+   R-29 换位横幅（1.0s 内多次交换合并）、R-30 归零归因、R-31 濒死泛红
+   ===================================================================== */
+function detectSwap(now){
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i];
+    if(c.rank !== state.prevRanks[i]){
+      /* 只播涉及玩家的交换（灰盒单人视角） */
+      if(c.isPlayer || state.prevRanks[state.playerIdx]!==cars[state.playerIdx].rank){
+        const other = state.order.find(function(o){ return !o.isPlayer && o.rank!==state.prevRanks[o.idx]; });
+        const colors = [];
+        if(other) colors.push(other.cls.color);
+        colors.push(c.cls.color);
+        if(now - state.bannerLast <= CFG.SwapMergeWindow && state.banner){
+          state.bannerCount++;
+          state.bannerColors = state.bannerColors.concat(colors);
+          state.banner = {count:state.bannerCount, colors:state.bannerColors, up:c.rank < state.prevRanks[i]};
+        } else {
+          state.bannerCount=1;
+          state.bannerColors=colors;
+          state.banner = {count:1, colors:colors, up:c.rank < state.prevRanks[i]};
+        }
+        state.bannerLast=now;
+        state.bannerUntil = now + CFG.SwapBannerTime;
+      }
+      /* 名次变化音：复用 R-29 的 1.0s 合并窗口，只发一次 */
+      if(c.isPlayer && state.banner) playCompete(state.banner.up ? 'up' : 'down');
+      state.swapLog.push({t:now, car:c.name, from:state.prevRanks[i], to:c.rank});
+      state.prevRanks[i]=c.rank;
+    }
+  }
+}
+function processZeroEvents(now){
+  if(!state.zeroEvents.length) return;
+  /* 两人同帧归零只播自己那份：两层全屏叠加会糊成一坨红。
+     若玩家在受害者中 → 只播玩家那份；否则全屏归因不播（避免双份叠加）。 */
+  let own=null;
+  for(let i=0;i<state.zeroEvents.length;i++) if(state.zeroEvents[i].victim.isPlayer){ own=state.zeroEvents[i]; break; }
+  for(let i=0;i<state.zeroEvents.length;i++){
+    const e=state.zeroEvents[i];
+    e.attacker.ringUntil = now + 1.0;
+    e.attacker.ringLabel = '击落';
+  }
+  if(own){
+    state.attribution = {
+      victim: own.victim, attacker: own.attacker,
+      text: own.victim.cls.name + ' · ' + own.victim.name,
+      color: own.victim.cls.color
+    };
+    state.attrUntil = now + CFG.AttrTextReal;
+    /* 0.15s 现实时间、0.35× 慢放：归因「插进去」，不盖住 R-22/R-23 的 0.3–0.5s 碰撞窗 */
+    state.slowRemain = CFG.ZeroSlowReal;
+    state.camPush = 1.0;
+    playZeroSfx();
+  }
+  state.zeroEvents.length=0;
+}
+function playZeroSfx(){
+  const ac=audioReady(); if(!ac) return;
+  try{
+    const now=ac.currentTime, o=ac.createOscillator(); o.type='sawtooth';
+    o.frequency.setValueAtTime(180,now); o.frequency.exponentialRampToValueAtTime(48,now+0.4);
+    const g=ac.createGain(); g.gain.setValueAtTime(0.06,now);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.45);
+    o.connect(g); g.connect(ac.destination); o.start(now); o.stop(now+0.46);
+  }catch(e){}
+}
+
+/* =====================================================================
+   主步进（固定步长 1/60；draw 不在这里，便于 headless 自测）
+   ===================================================================== */
+function step(dt){
+  /* 开局面板阶段不推进模拟：避免时钟偷跑、派发 RNG 未初始化、误触发结果页 */
+  if(!state || !state.started || state.paused) return;
+  const now = state.elapsed;
+
+  /* 最后 20s 四事同刻（直接用具名常量 CFG.TEnd，禁止散落字面值 20） */
+  if(!state.finalPhase && (CFG.MatchSeconds - now) <= CFG.TEnd) enterFinalPhase(now);
+  state.elapsed += dt;
+  if(state.elapsed >= CFG.MatchSeconds){
+    state.elapsed = CFG.MatchSeconds;
+    if(!state.finished){ state.finished=true; showResult(); }
+  }
+
+  computeRanks();
+  detectSwap(state.elapsed);
+  dispatchItems(now, dt);
+
+  /* 全场火花额度按 dt 统一累加（每帧 ≤ 72/60 ≈ 1.2 粒），各车只消费不累加 */
+  dbg.lastFrameSparks=0;
+  state.sparkGlobalAcc = Math.min(state.sparkGlobalAcc + dt*CFG.SparkRateGlobalCap, 3);
+
+  /* 玩家 / AI 共用物理（AI 不免疫磨墙） */
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i];
+    c.sparkThisFrame=0;
+    const input = c.isPlayer ? (state.demo ? demoInput(c,now) : playerInput(c,now)) : aiInput(c,now);
+    updateCarPhysics(c, dt, now, input);
+  }
+  resolveContacts(now, dt);
+  for(let i=0;i<cars.length;i++) resolveObstacles(cars[i], now);
+  updateProjectiles(dt, now);
+  updateSparks(dt);
+  processZeroEvents(now);
+
+  /* R-31 濒死泛红：自见不是他见；恢复后 1.0s 淡出 */
+  const p=cars[state.playerIdx];
+  const low = p.hp < CFG.LowHpFrac*p.cls.hp;
+  if(low){ state.lowHpFade = CFG.LowHpFade; state.lowHpWas=true; }
+  else if(state.lowHpWas && state.lowHpFade>0){ state.lowHpFade -= dt; if(state.lowHpFade<=0) state.lowHpWas=false; }
+
+  /* R-30 的 0.15s 慢放按「现实时间」计，在 loop() 里用 raw dt 递减（不在此处按模拟 dt 减，
+     否则 0.35× 慢放会把 0.15s 拉成 ≈0.43s 现实时间，违反 R-30 硬约束）。
+     镜头轻推衰减按模拟 dt 即可。 */
+  if(state.camPush>0) state.camPush = Math.max(0, state.camPush - dt*1.6);
+  if(state.attrUntil>0 && state.elapsed>state.attrUntil) state.attribution=null;
+  if(state.bannerUntil>0 && state.elapsed>state.bannerUntil) state.banner=null;
+  if(state.finalBannerUntil>0 && state.elapsed>state.finalBannerUntil) state.finalBannerUntil=0;
+
+  /* 摄像机跟随玩家横向滚动 */
+  state.camS = Math.max(0, p.s - (W/CFG.PX_PER_M)*0.30);
+
+  /* 幽灵轨迹采样：每 0.1s（6 个固定步长）采一次 {t,s,d}，有界 ≤2200 点。
+     只录玩家，绝不进 cars[]，也不参与任何统一遍历。 */
+  if(p.s > state.maxPlayerS) state.maxPlayerS = p.s;
+  state.ghostAcc += dt;
+  if(state.ghostAcc >= CFG.GhostSampleEvery){
+    state.ghostAcc -= CFG.GhostSampleEvery;
+    if(state.ghostSamples.length < CFG.GhostMaxSamples)
+      state.ghostSamples.push({t:state.elapsed, s:p.s, d:p.d});
+  }
+  /* AI 逼近预警音：复用 gapBehind / huntStage 既有数据，不新建检测；开跑 5s 内屏蔽 */
+  if(state.audioOn && !state.demo && state.elapsed > 5 && state.elapsed - state.nearWarnAt > 1.2){
+    const behind = state.order.find(function(o){ return o.rank === p.rank+1; });
+    if(behind && state.raceProgress >= CFG.AiPStart){
+      const gt = behind.gapAhead/Math.max(behind.v,1);
+      if(gt <= CFG.BiteTier2){ state.nearWarnAt = state.elapsed; playCompete('near'); }
+    }
+  }
+
+  /* 「看示范」自动循环：玩家车越过 DemoLoopS 即重开一局，循环演示「冲弯蹭墙 / 干净过弯」 */
+  if(state.demo && !state.finished && cars[state.playerIdx].s > CFG.DemoLoopS){ startDemo(); }
+}
+
+/* =====================================================================
+   渲染
+   ===================================================================== */
+function ox(){ return W*0.30 - state.camS*CFG.PX_PER_M + state.camPush*10; }
+function screenOfPx(p){ return {x:p.x + ox(), y:H*CFG.BaseYFrac + p.y}; }
+function screenOf(s,d){ return screenOfPx(toPx(s,d)); }
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0E1115'; ctx.fillRect(0,0,W,H);
+  /* 开局面板尚未开局：cars 为空，只画背景，不触碰 HUD / 世界层 */
+  if(!state.started || cars.length===0) return;
+  drawBackdrop();
+  ctx.save();
+  ctx.translate(state.camPush*3, 0);
+  drawTrack();
+  drawCornerLabels();
+  drawForkSign();
+  drawBoostBand();
+  drawHuntColumn();
+  drawProjectiles();
+  drawCars();
+  drawGhost();
+  drawGrindSparks();
+  drawRings();
+  ctx.restore();
+  drawEdgeFX();
+  drawHUD();
+  if(state.showForbid) drawForbidZone();
+  if(state.paused) drawPaused();
+}
+function drawBackdrop(){
+  /* 极简网格，帮助读出横向滚动；同亮度，不含任何路线推荐语义 */
+  ctx.strokeStyle='rgba(255,255,255,0.028)'; ctx.lineWidth=1;
+  const stepPx=CFG.PX_PER_M*20;
+  let x0 = ox() % stepPx; if(x0<0) x0+=stepPx;
+  for(let x=x0;x<W;x+=stepPx){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for(let y=H*CFG.BaseYFrac%60;y<H;y+=60){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+}
+
+/* 三条路同底色、同描边亮度（PR-1 / R-24）。窄路只用碎石与障碍剪影表现「更危险」，
+   绝对不给金色 / 光柱 / 箭头 / 亮度差 / 「更快」字样。 */
+function drawRegion(a,b,routes){
+  if(b<=a) return;
+  const stepM=3;
+  for(let ri=0;ri<routes.length;ri++){
+    const r = routes[ri]===null ? 0 : routes[ri];
+    const pts=[];
+    for(let s=a;s<=b+stepM;s+=stepM){
+      const ss=Math.min(s,b), g=roadGeom(ss,r), cy=yc(ss);
+      pts.push({x:(ss-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10,
+                top:H*CFG.BaseYFrac + (cy+g.c-g.hw)*CFG.PY_PER_M,
+                bot:H*CFG.BaseYFrac + (cy+g.c+g.hw)*CFG.PY_PER_M});
+    }
+    /* 路面填充 */
+    ctx.beginPath();
+    for(let i=0;i<pts.length;i++){ if(i===0) ctx.moveTo(pts[i].x,pts[i].top); else ctx.lineTo(pts[i].x,pts[i].top); }
+    for(let i=pts.length-1;i>=0;i--) ctx.lineTo(pts[i].x,pts[i].bot);
+    ctx.closePath(); ctx.fillStyle=CFG.RoadFill; ctx.fill();
+    /* 护栏：三条路完全同色同线宽 */
+    ctx.strokeStyle=CFG.RoadEdge; ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let i=0;i<pts.length;i++){ if(i===0) ctx.moveTo(pts[i].x,pts[i].top); else ctx.lineTo(pts[i].x,pts[i].top); }
+    ctx.stroke();
+    ctx.beginPath();
+    for(let i=0;i<pts.length;i++){ if(i===0) ctx.moveTo(pts[i].x,pts[i].bot); else ctx.lineTo(pts[i].x,pts[i].bot); }
+    ctx.stroke();
+    /* 窄路：碎石 + 障碍剪影（同灰系低对比，不抬平均亮度） */
+    if(routes.length===3 && r===1 && a<=FORK_C && b>=FORK_B){
+      ctx.fillStyle=CFG.GravelColor;
+      for(let s=Math.max(a,FORK_B); s<Math.min(b,FORK_C); s+=7){
+        const g=roadGeom(s,1), cy=yc(s);
+        for(let q=0;q<3;q++){
+          /* 用 s 的确定性函数布局碎石，避免每帧随机导致闪烁 */
+          const t=((s*0.37+q*0.29)%1);
+          const px=(s-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10;
+          const py=H*CFG.BaseYFrac+(cy+g.c+(t*2-1)*(g.hw-0.3))*CFG.PY_PER_M;
+          ctx.fillRect(px,py,2,2);
+        }
+      }
+      for(let i=0;i<OBSTACLES.length;i++){
+        const o=OBSTACLES[i];
+        if(o.s<a||o.s>b) continue;
+        const g=roadGeom(o.s,1), cy=yc(o.s);
+        const px=(o.s-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10;
+        const py=H*CFG.BaseYFrac+(cy+g.c+o.d)*CFG.PY_PER_M;
+        /* 障碍剪影：同灰系低对比，仅加一道与护栏同色的描边提升可读性，
+           不引入金色 / 光柱 / 箭头 / 亮度差（PR-1、R-24） */
+        ctx.fillStyle=CFG.ObstacleColor;
+        ctx.fillRect(px-6, py-6, 12, 12);
+        ctx.strokeStyle=CFG.RoadEdge; ctx.lineWidth=1;
+        ctx.strokeRect(px-6, py-6, 12, 12);
+      }
+    }
+    /* 中心线虚线（同亮度） */
+    ctx.setLineDash && ctx.setLineDash([7,9]);
+    ctx.strokeStyle='rgba(180,190,200,0.16)'; ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let i=0;i<pts.length;i++){
+      const mid=(pts[i].top+pts[i].bot)/2;
+      if(i===0) ctx.moveTo(pts[i].x,mid); else ctx.lineTo(pts[i].x,mid);
+    }
+    ctx.stroke();
+    if(ctx.setLineDash) ctx.setLineDash([]);
+  }
+}
+function drawTrack(){
+  const s0=state.camS-25, s1=state.camS + W/CFG.PX_PER_M + 25;
+  const segs=[[s0,FORK_A],[FORK_A,FORK_B],[FORK_B,FORK_C],[FORK_C,FORK_D],[FORK_D,s1]];
+  const rts =[[null],    [null],       [0,1,2],    [0,1,2],    [null]];
+  for(let i=0;i<segs.length;i++){
+    const a=Math.max(segs[i][0],s0), b=Math.min(segs[i][1],s1);
+    if(b>a) drawRegion(a,b,rts[i]);
+  }
+  drawSea();   // 海路水面覆盖在海域段沥青之上，明确「海路 ≠ 陆路」
+}
+/* 海路渲染：仅作用于主线（route 0）海域段，画水面 + 波纹 + 「海域 SEA」标签 */
+function drawSea(){
+  const a=Math.max(CFG.SeaStart, state.camS-25);
+  const b=Math.min(CFG.SeaEnd, state.camS + W/CFG.PX_PER_M + 25);
+  if(b<=a) return;
+  const stepM=3, r=0, pts=[];
+  for(let s=a;s<=b+stepM;s+=stepM){
+    const ss=Math.min(s,b), g=roadGeom(ss,r), cy=yc(ss);
+    pts.push({x:(ss-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10,
+              top:H*CFG.BaseYFrac + (cy+g.c-g.hw)*CFG.PY_PER_M,
+              bot:H*CFG.BaseYFrac + (cy+g.c+g.hw)*CFG.PY_PER_M});
+  }
+  ctx.beginPath();
+  for(let i=0;i<pts.length;i++){ if(i===0) ctx.moveTo(pts[i].x,pts[i].top); else ctx.lineTo(pts[i].x,pts[i].top); }
+  for(let i=pts.length-1;i>=0;i--) ctx.lineTo(pts[i].x,pts[i].bot);
+  ctx.closePath();
+  ctx.fillStyle=CFG.SeaFill; ctx.fill();
+  ctx.strokeStyle=CFG.RoadEdge; ctx.lineWidth=2; ctx.stroke();   // 海堤
+  /* 波纹（确定性正弦，不闪烁） */
+  ctx.strokeStyle='rgba(220,235,245,0.20)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let i=0;i<pts.length;i++){
+    const mid=(pts[i].top+pts[i].bot)/2;
+    const wob=Math.sin(pts[i].x*0.05 + state.elapsed*1.6)*2;
+    if(i===0) ctx.moveTo(pts[i].x,mid+wob); else ctx.lineTo(pts[i].x,mid+wob);
+  }
+  ctx.stroke();
+  /* 「海域 SEA」标签 */
+  if(CFG.SeaStart>state.camS-25 && CFG.SeaStart<state.camS+W/CFG.PX_PER_M+25){
+    const px=(CFG.SeaStart-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10;
+    ctx.fillStyle='#BFE2EC'; ctx.font='12px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+    ctx.fillText('海域 SEA', px, H*CFG.BaseYFrac - 70);
+  }
+}
+function drawCornerLabels(){
+  /* 世界层小标签：只标弯道类型，不涉及路线快慢（不触碰 PR-1） */
+  ctx.font='11px Consolas,monospace'; ctx.textAlign='center';
+  for(let i=0;i<CFG.Corners.length;i++){
+    const c=CFG.Corners[i];
+    if(c.s<state.camS-20 || c.s>state.camS+W/CFG.PX_PER_M+20) continue;
+    const g=roadGeom(c.s,0), cy=yc(c.s);
+    const px=(c.s-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10;
+    const py=H*CFG.BaseYFrac+(cy-g.hw)*CFG.PY_PER_M - 8;
+    ctx.fillStyle='rgba(150,162,175,0.55)';
+    ctx.fillText(c.label, px, py);
+  }
+}
+function drawForkSign(){
+  /* 岔路口提前 40m 只标「此处有岔路」，不标哪条更快 / 不给箭头 / 不给金色 */
+  if(FORK_A<state.camS-20 || FORK_A>state.camS+W/CFG.PX_PER_M+20) return;
+  const px=(FORK_A-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10;
+  const py=H*CFG.BaseYFrac - 120;
+  ctx.fillStyle='#2A323B'; ctx.fillRect(px-52,py-14,104,22);
+  ctx.strokeStyle='#48535F'; ctx.lineWidth=1; ctx.strokeRect(px-52,py-14,104,22);
+  ctx.fillStyle='#B7C2CE'; ctx.font='12px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+  ctx.fillText('此处有岔路', px, py+2);
+}
+function drawBoostBand(){
+  if(!state.finalPhase) return;
+  /* 世界层：全场统一中性斜纹，不区分路线，不违反 PR-1 */
+  const s0=state.camS, s1=state.camS+W/CFG.PX_PER_M;
+  ctx.save();
+  ctx.globalAlpha=0.10;
+  ctx.fillStyle='#FFFFFF';
+  for(let s=Math.floor(s0/12)*12;s<s1;s+=12){
+    const px=(s-state.camS)*CFG.PX_PER_M + W*0.30 + state.camPush*10;
+    ctx.fillRect(px, H*CFG.BaseYFrac-38, 5, 76);
+  }
+  ctx.restore();
+}
+function drawHuntColumn(){
+  /* R-32 猎杀时刻：垂直静止光柱（不沿赛道倾斜 / 不流动 / 不投地面指向线） */
+  if(state.huntStage<=0) return;
+  const L=state.leader; if(!L) return;
+  const p=screenOf(L.s,L.d);
+  const red = state.huntStage>=2;
+  const pulse = red ? (0.7+0.3*Math.sin(state.elapsed*7)) : 1;
+  ctx.save();
+  ctx.globalAlpha=(red?0.16:0.09)*pulse;
+  ctx.fillStyle = red ? '#FF3B30' : '#FFFFFF';
+  ctx.fillRect(p.x-14, 0, 28, H);        // 严格垂直、静止、无地面指向线
+  ctx.restore();
+  ctx.fillStyle=red?'#FF6B60':'#E6EDF4';
+  ctx.font='13px Consolas,monospace'; ctx.textAlign='center';
+  ctx.fillText('♛', p.x, 22);
+  /* 标记不加伤害：此处没有任何 on_hit / 伤害写入（R-32，R3 仍标未闭环） */
+}
+
+function drawCars(){
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i], p=screenOf(c.s,c.d);
+    if(p.x < -80 || p.x > W+80) continue;
+    /* DEV-1：水下潜艇 ≥60m 外不可见（信息层，不是物理层；碰撞盒仍在） */
+    if(c.underwater && !c.isPlayer && Math.abs(c.s-cars[state.playerIdx].s)>CFG.SubHiddenRange) continue;
+    drawOneCar(c,p);
+  }
+}
+function drawOneCar(c,p){
+  ctx.save();
+  ctx.translate(p.x,p.y);
+  /* ---- 车-车挤压反馈：车体侧倾 + 连续震频（零粒子，与火花通道分离） ----
+     drawSqueezeFeedback 是唯一入口；不允许 spawnGrindSpark 出现在这里。 */
+  let tilt=0, jx=0, jy=0;
+  if(c.squeeze){
+    tilt = c.squeezeSide*clamp(c.squeezeTime*0.02,0,1)*CFG.SqueezeTiltMax;
+    const amp=CFG.SqueezeJitter;
+    jx=(Math.sin(state.elapsed*83+c.idx*2.1))*amp;
+    jy=(Math.cos(state.elapsed*91+c.idx*1.7))*amp;
+    ctx.translate(jx,jy);
+  }
+  ctx.rotate(tilt);
+  const w=CFG.CarHalfW*2*CFG.PX_PER_M, h=CFG.CarLen*CFG.PX_PER_M*0.55;
+  /* 车体：仅四车使用其高饱和身份色；火花绝不复用这些色 */
+  ctx.fillStyle=c.cls.color;
+  ctx.globalAlpha = c.underwater ? 0.55 : 1;
+  roundRect(-w/2,-h/2,w,h,3); ctx.fill();
+  ctx.globalAlpha=1;
+  /* 玩家车 1px 白描边：按 c.isPlayer 分支，AI 车不描边；不改变视口剔除所用坐标 */
+  if(c.isPlayer){
+    ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=1;
+    roundRect(-w/2,-h/2,w,h,3); ctx.stroke();
+  }
+  /* 车头方向指示（+s） */
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.fillRect(w/2-4,-2,5,4);
+  /* 护盾外壳（R-14 对手可见） */
+  if(state.elapsed < c.shield_until){
+    ctx.strokeStyle='rgba(255,255,255,0.85)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(0,0,w*0.72,0,Math.PI*2); ctx.stroke();
+  }
+  /* 归零减速 / 免疫两态可分（R-11）：减速＝向下收敛，免疫＝向外扩张 */
+  if(state.elapsed < c.penaltyUntil){
+    ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(-w/2,h/2+4); ctx.lineTo(w/2,h/2+4); ctx.stroke();
+  }
+  if(state.elapsed < c.immune_until){
+    ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(0,0,w*0.85,0,Math.PI*2); ctx.stroke();
+  }
+  /* 持有道具：车身短闪（不做世界拾取箱） */
+  if(c.heldFlash>0){
+    ctx.strokeStyle=CFG.Accent; ctx.lineWidth=2; ctx.globalAlpha=clamp(c.heldFlash*3,0,1);
+    roundRect(-w/2-3,-h/2-3,w+6,h+6,4); ctx.stroke(); ctx.globalAlpha=1;
+  }
+  /* R-30 攻击者侧：击落白环 */
+  if(state.elapsed < c.ringUntil){
+    ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(0,0,w*0.95,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='#FFFFFF'; ctx.font='10px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+    ctx.fillText(c.ringLabel, 0, -h/2-10);
+  }
+  ctx.restore();
+  /* 名牌（世界层，小字） */
+  ctx.fillStyle='rgba(220,228,236,0.75)'; ctx.font='10px Consolas,monospace'; ctx.textAlign='center';
+  ctx.fillText(c.name, p.x, p.y - 18);
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+function drawProjectiles(){
+  for(let i=0;i<projectiles.length;i++){
+    const p=projectiles[i], s=screenOfPx(p);
+    ctx.strokeStyle='rgba(255,255,255,0.75)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x-p.vx*0.012,s.y-p.vy*0.012); ctx.stroke();
+    ctx.fillStyle='#FFFFFF'; ctx.beginPath(); ctx.arc(s.x,s.y,2.5,0,Math.PI*2); ctx.fill();
+  }
+}
+/* ---- 车-墙摩擦：火花通道（唯一）。场景内表现，不进 HUD。 ----
+   中心禁区 x22–78% / y29–71% 只约束 UI 控件布局；本函数是世界层粒子，
+   不新增任何 HUD 元素、不在禁区放置任何 UI。
+   单色恒定 #FFF3D6：不做色相迁移、不落到 #FFD400。理由：#FFD400 在 §3.3
+   是「全 UI 独家」注意色，只用于「这里有岔路／规则将变」；世界空间粒子衰减
+   到它会与 HUD 的岔路提示／规则变化串味（§13 第三类）。亮度 100%→40% 与
+   alpha 1→0 同源，全部靠 alpha 调制实现，不调用 mixColor、不引入第二色。
+   ★ 无光晕无屏闪（附录 C 三通道表）：旧版 5px 同色低 alpha 外层描边已删除；
+     头部 2.6px 亮点是粒子本体，不是光晕，保留但按 size(u) 收缩。 */
+function drawGrindSparks(){
+  const col = CFG.SparkColorStart;
+  const pCar = cars[state.playerIdx];
+  const pS = pCar ? pCar.s : 0;
+  /* 恒定尾迹 ≤2.1m → 像素；不随 t 拉长、不随车速增长（6.0 m/s × 0.35s ≈ 2.1m） */
+  const tail = CFG.SparkTailMeters*CFG.PX_PER_M;
+  for(let i=0;i<sparks.length;i++){
+    const p=sparks[i], t=clamp(p.age/p.life,0,1), s=screenOfPx(p);
+    if(s.x<-20||s.x>W+20) continue;
+    /* 第三组独立雾常量（不与气泡 / 冒烟共用）：≤40m 满 / 40–60m 线性衰减 /
+       60m 归零 / 65m 剔除。距离取粒子当前弧长 s 与玩家的差（拉直赛道带的
+       天然距离口径）；远处火花会变成「那里有人磨墙、可以去挤」的集火线索。 */
+    const distM = Math.abs(p.x/CFG.PX_PER_M - pS);
+    if(distM > CFG.SparkCull) continue;                       // 65m 渲染剔除
+    const fog = clamp((CFG.SparkFogFar - distM)/(CFG.SparkFogFar - CFG.SparkFogNear), 0, 1);
+    if(fog <= 0) continue;                                    // 60m 归零
+    const decay = Math.pow(1-t, 1.6);                         // alpha(u)=(1-u)^1.6，生成即峰值
+    const size  = 1 - 0.6*t;                                  // size(u)=1-0.6u
+    /* 方向性火花：向后拖尾（-s 为屏幕左，尾迹在其反方向 +x）。
+       内层亮芯按 size(u) 收缩；不闪烁、不呼吸、不脉动、不提高发射率。 */
+    ctx.globalAlpha = decay*fog;
+    ctx.strokeStyle = col; ctx.lineWidth = 2.6*size;
+    ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x+tail, s.y - p.vy*0.006); ctx.stroke();
+    ctx.fillStyle = col;
+    const hs = 1.3*size;                                      // 头部亮点＝粒子本体，非光晕
+    ctx.fillRect(s.x-hs, s.y-hs, 2*hs, 2*hs);
+  }
+  ctx.globalAlpha=1;
+}
+/* ---- 幽灵车：纯渲染层只读回放，绝不进 cars[] ----
+   数据来自 state.best.samples（历史最佳跑法），按 state.elapsed 线性插值。
+   不参与 computeRanks / resolveContacts / dispatchItems / updateProjectiles /
+   updateCarPhysics / finishTime / 名次列；「不可碰撞」由不在遍历集合里结构保证。 */
+function drawGhost(){
+  if(!state.best || !state.best.samples || !state.best.samples.length) return;
+  const g = ghostAt(state.best.samples, state.elapsed);
+  if(!g) return;
+  const sp = screenOf(g.s, g.d);
+  if(sp.x < -80 || sp.x > W+80) return;
+  const w = CFG.CarHalfW*2*CFG.PX_PER_M, h = CFG.CarLen*CFG.PX_PER_M*0.55;
+  ctx.save();
+  ctx.translate(sp.x, sp.y);
+  ctx.globalAlpha = CFG.GhostFillAlpha;
+  ctx.fillStyle = CFG.GhostColor;
+  roundRect(-w/2,-h/2,w,h,3); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = CFG.GhostColor; ctx.lineWidth = CFG.GhostLineWidth;
+  if(ctx.setLineDash) ctx.setLineDash(CFG.GhostDash);
+  roundRect(-w/2,-h/2,w,h,3); ctx.stroke();
+  if(ctx.setLineDash) ctx.setLineDash([]);
+  ctx.restore();
+}
+function drawRings(){ /* 保留独立层级，避免与火花通道混用 */ }
+
+/* ---- 屏幕边缘效果：R-28 咬住 / R-31 濒死泛红 / R-30 归因 / R-29 横幅 ---- */
+function drawEdgeFX(){
+  const p=cars[state.playerIdx];
+  /* R-28：与前车时间差两档，只两档、不显示秒数 / 米数 */
+  const ahead = state.order.find(function(o){ return o.rank===p.rank-1; });
+  const behind = state.order.find(function(o){ return o.rank===p.rank+1; });
+  if(ahead){
+    const gt = p.gapAhead/Math.max(p.v,1);
+    if(gt<=CFG.BiteTier2){
+      const strong = gt<=CFG.BiteTier1;
+      let a = strong ? 0.55 : 0.28;
+      if(strong){
+        const hb=0.5+0.5*Math.sin(state.elapsed*(2*Math.PI/CFG.HeartbeatPeriod));
+        a = 0.30 + 0.35*hb;
+      }
+      ctx.strokeStyle='rgba(230,238,246,'+a+')';
+      ctx.lineWidth = strong ? 5 : 2;
+      ctx.beginPath(); ctx.arc(W+30, H/2, H*0.55, Math.PI*0.72, Math.PI*1.28); ctx.stroke();
+    }
+  }
+  if(behind){
+    const gt = behind.gapAhead/Math.max(behind.v,1);
+    if(gt<=CFG.BiteTier2){
+      const strong = gt<=CFG.BiteTier1;
+      let a = strong ? 0.55 : 0.28;
+      if(strong){ const hb=0.5+0.5*Math.sin(state.elapsed*(2*Math.PI/CFG.HeartbeatPeriod)); a=0.30+0.35*hb; }
+      ctx.strokeStyle='rgba(140,170,200,'+a+')';  // 被咬住：反向弧 + 异色
+      ctx.lineWidth = strong ? 5 : 2;
+      ctx.beginPath(); ctx.arc(-30, H/2, H*0.55, -Math.PI*0.28, Math.PI*0.28); ctx.stroke();
+    }
+  }
+  /* R-31：hp<25% 边缘泛红，0.8Hz 呼吸，最大 alpha 0.16，自见不是他见，恢复后 1.0s 淡出 */
+  if(state.lowHpWas && state.lowHpFade>0){
+    const breathe=0.5+0.5*Math.sin(state.elapsed*2*Math.PI*CFG.LowHpHz);
+    const fade=state.lowHpWas && p.hp<CFG.LowHpFrac*p.cls.hp ? 1 : clamp(state.lowHpFade/CFG.LowHpFade,0,1);
+    const a=CFG.LowHpAlphaMax*breathe*fade;
+    ctx.fillStyle='rgba(220,40,40,'+a+')';
+    const bx=W*CFG.Forbid.x0, by=H*CFG.Forbid.y0, bw=W*(CFG.Forbid.x1-CFG.Forbid.x0), bh=H*(CFG.Forbid.y1-CFG.Forbid.y0);
+    ctx.fillRect(0,0,W,by); ctx.fillRect(0,by+bh,W,H-(by+bh));
+    ctx.fillRect(0,by,bx,bh); ctx.fillRect(bx+bw,by,W-(bx+bw),bh);
+  }
+  /* R-30：全屏一行归因（0.15s 慢放 + 镜头轻推由 step 控制；文字停留另计） */
+  if(state.attribution && state.elapsed<state.attrUntil){
+    const a=clamp((state.attrUntil-state.elapsed)/0.3,0,1);
+    ctx.fillStyle='rgba(8,10,14,'+(0.62*a)+')';
+    ctx.fillRect(0,H*0.20,W,H*0.085);
+    ctx.fillStyle=rgba(state.attribution.color, a);
+    ctx.font='bold 24px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+    ctx.fillText(state.attribution.text+'　归零', W/2, H*0.20+H*0.058);
+    ctx.fillStyle='rgba(200,208,218,'+a+')'; ctx.font='12px "Microsoft YaHei",sans-serif';
+    ctx.fillText('来自 '+(state.attribution.attacker?state.attribution.attacker.name:'—')+'　·　限时减速，不淘汰', W/2, H*0.20+H*0.078);
+  }
+  /* R-29：换位横幅（0.6s，1.0s 内多次交换已合并） */
+  if(state.banner && state.elapsed<state.bannerUntil){
+    const a=clamp((state.bannerUntil-state.elapsed)/0.2,0,1);
+    const bw=340, bh=38, bx=W/2-bw/2, by=H*0.10;
+    ctx.fillStyle='rgba(16,20,26,'+(0.9*a)+')'; ctx.fillRect(bx,by,bw,bh);
+    ctx.strokeStyle=rgba(CFG.Accent,0.7*a); ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,bh);
+    let cx=bx+12;
+    for(let i=0;i<state.banner.colors.length && i<6;i++){
+      ctx.fillStyle=state.banner.colors[i]; ctx.fillRect(cx,by+11,14,16); cx+=19;
+    }
+    ctx.fillStyle=rgba('#FFFFFF',a); ctx.font='bold 15px "Microsoft YaHei",sans-serif'; ctx.textAlign='left';
+    const txt = (state.banner.up?'↑ 超过 ':'↓ 被超 ') + (state.banner.count>1?('· 连续交换 ×'+state.banner.count):'');
+    ctx.fillText(txt, cx+4, by+24);
+  }
+  /* 最后 20s 规则变化提示（世界通道 + UI 通道分离，R-15 精神） */
+  if(state.finalBannerUntil>0 && state.elapsed<state.finalBannerUntil){
+    const a=clamp((state.finalBannerUntil-state.elapsed)/0.5,0,1);
+    ctx.fillStyle='rgba(16,20,26,'+(0.88*a)+')'; ctx.fillRect(W/2-210,H*0.155,420,34);
+    ctx.strokeStyle=rgba(CFG.Accent,0.75*a); ctx.lineWidth=1; ctx.strokeRect(W/2-210,H*0.155,420,34);
+    ctx.fillStyle=rgba('#FFFFFF',a); ctx.font='bold 14px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+    ctx.fillText('最后 20 秒 · 禁攻击 · 派发停止 · 加速带开放 · 持有道具兑换加速', W/2, H*0.155+22);
+  }
+  /* 领先者只看到「有人在追」（R-33：补偿百分比只对获得者显示） */
+}
+
+function drawPaused(){
+  ctx.fillStyle='rgba(8,10,14,0.55)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#FFFFFF'; ctx.font='bold 30px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+  ctx.fillText('已暂停 · P 继续', W/2, H*0.16);
+}
+function drawForbidZone(){
+  const x0=W*CFG.Forbid.x0, x1=W*CFG.Forbid.x1, y0=H*CFG.Forbid.y0, y1=H*CFG.Forbid.y1;
+  ctx.save(); ctx.setLineDash && ctx.setLineDash([6,5]);
+  ctx.strokeStyle='rgba(255,212,0,0.55)'; ctx.lineWidth=1;
+  ctx.strokeRect(x0,y0,x1-x0,y1-y0); ctx.restore();
+  ctx.fillStyle='rgba(255,212,0,0.7)'; ctx.font='10px Consolas,monospace'; ctx.textAlign='left';
+  ctx.fillText('中心禁区（仅调试显示，UI 不得放置）', x0+4, y0+12);
+}
+
+/* ---- HUD：全部排在中心禁区之外 ----
+   左上（x<22%, y<29%）：计时 / 阶段 / 威胁提示
+   右上（x>78%）：小地图 + 名次列（永不隐藏）
+   左下（y>71%）：自己的速度 / 血量 / 技能 / 道具 / 补偿
+   上方横条（y<29%）：R-29 横幅 / R-30 归因一行 / 终局提示
+*/
+function drawHUD(){
+  const p=cars[state.playerIdx];
+  const rem=Math.max(0,CFG.MatchSeconds-state.elapsed);
+  const mm=Math.floor(rem/60), ss=Math.floor(rem%60);
+  /* ---- 左上 ---- */
+  ctx.textAlign='left';
+  ctx.fillStyle='rgba(10,13,17,0.72)'; ctx.fillRect(10,10,244,92);
+  ctx.strokeStyle='#2C343E'; ctx.lineWidth=1; ctx.strokeRect(10,10,244,92);
+  /* L1：当前用时 / 剩余时间（同一数字区，不新增面板） */
+  const curM=Math.floor(state.elapsed/60), curS=Math.floor(state.elapsed%60);
+  ctx.fillStyle='#E8EEF5'; ctx.font='bold 19px Consolas,monospace';
+  ctx.fillText(curM+':'+String(curS).padStart(2,'0')+' / '+mm+':'+String(ss).padStart(2,'0'), 20, 36);
+  ctx.font='11px "Microsoft YaHei",sans-serif'; ctx.fillStyle='#94A2B2';
+  ctx.fillText('赛程 '+(state.raceProgress*100).toFixed(1)+'%  ·  '+p.s.toFixed(0)+'/'+CFG.TrackLength+'m', 20, 54);
+  /* L2：最佳完赛成绩（新增显示位，左标签 + 右数值；无纪录显示 —，不隐藏整行） */
+  const best=state.best;
+  const bestTxt = best ? (best.finishTime>=0 ? best.finishTime.toFixed(1)+'s' : best.maxS.toFixed(0)+'m') : '—';
+  ctx.fillText('最佳完赛成绩', 20, 70);
+  ctx.fillStyle=state.newBest?'#F2F5F8':'#94A2B2';
+  ctx.textAlign='right'; ctx.font='12px Consolas,monospace';
+  ctx.fillText(bestTxt, 244, 70); ctx.textAlign='left';
+  ctx.font='11px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle=state.finalPhase?CFG.Accent:'#7E8B9A';
+  ctx.fillText((state.finalPhase?'终局 20s：禁攻击 / 加速带开放':'规则正常 · 攻击可用')+'　'+state.timeScale+'x', 20, 86);
+
+  /* ---- 右上：小地图 + 名次列 ---- */
+  const mx=W-236, mw=224;
+  ctx.fillStyle='rgba(10,13,17,0.78)'; ctx.fillRect(mx,10,mw,64);
+  ctx.strokeStyle='#2C343E'; ctx.strokeRect(mx,10,mw,64);
+  ctx.fillStyle='#94A2B2'; ctx.font='10px "Microsoft YaHei",sans-serif';
+  ctx.fillText('全图 0 —— '+CFG.TrackLength+'m', mx+8, 24);
+  const barX=mx+10, barW=mw-20, barY=40;
+  ctx.fillStyle='#2A323B'; ctx.fillRect(barX,barY,barW,10);
+  /* 分叉区中性刻度（同亮度，不暗示哪条更快） */
+  ctx.fillStyle='#3B4550';
+  ctx.fillRect(barX+barW*FORK_B/CFG.TrackLength,barY-3,barW*CFG.ForkSpan/CFG.TrackLength,16);
+  /* 海路段：水面色带，明确「海路 ≠ 陆路」 */
+  ctx.fillStyle=CFG.SeaFill;
+  ctx.fillRect(barX+barW*CFG.SeaStart/CFG.TrackLength,barY-3,barW*(CFG.SeaEnd-CFG.SeaStart)/CFG.TrackLength,16);
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i];
+    if(c.underwater){
+      /* DEV-1：水下潜艇不给实时点，只给 2.0s 衰减尾迹 */
+      for(let q=0;q<c.trail.length;q++){
+        const age=state.elapsed-c.trail[q].t;
+        const a=clamp(1-age/CFG.SubTrailSeconds,0,1)*0.8;
+        ctx.fillStyle=rgba('#9FB6C9',a);
+        ctx.fillRect(barX+barW*clamp(c.trail[q].s/CFG.TrackLength,0,1)-1,barY+3,2,4);
+      }
+      continue;
+    }
+    const x=barX+barW*clamp(c.s/CFG.TrackLength,0,1);
+    ctx.fillStyle=c.cls.color;
+    const r=c.isPlayer?5:3;
+    ctx.beginPath(); ctx.arc(x,barY+5,r,0,Math.PI*2); ctx.fill();
+    if(c.isPlayer){ ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x,barY+5,7,0,Math.PI*2); ctx.stroke(); }
+    /* R-32 小地图皇冠（≥65% 头名标记） */
+    if(state.huntStage>0 && c===state.leader){
+      ctx.fillStyle=state.huntStage>=2?'#FF6B60':'#E6EDF4'; ctx.font='11px Consolas,monospace';
+      ctx.textAlign='center'; ctx.fillText('♛',x,barY-6); ctx.textAlign='left';
+    }
+  }
+  /* 名次列：剪影 + 名次 + ±m，永不隐藏（R-20 / R-09） */
+  const ry=84;
+  /* 表头行高 20→40：L1854 fillRect 与 L1855 strokeRect 两处高度必须同步，否则框会切掉最后一行 */
+  ctx.fillStyle='rgba(10,13,17,0.78)'; ctx.fillRect(mx,ry,mw,40+cars.length*20);
+  ctx.strokeStyle='#2C343E'; ctx.strokeRect(mx,ry,mw,40+cars.length*20);
+  ctx.fillStyle='#94A2B2'; ctx.font='10px "Microsoft YaHei",sans-serif';
+  ctx.fillText('名次　载具　±m', mx+8, ry+13);
+  /* L1 主名次大字：由既有 P1..P4 小字放大重排，零新数据源 */
+  ctx.fillStyle='#F2F5F8'; ctx.font='bold 24px Consolas,monospace';
+  ctx.fillText('P'+p.rank+' / '+cars.length, mx+8, ry+35);
+  for(let i=0;i<state.order.length;i++){
+    const c=state.order[i], y=ry+52+i*20;
+    ctx.fillStyle=c.cls.color; ctx.fillRect(mx+8,y-9,11,11);           // 剪影
+    ctx.fillStyle=c.isPlayer?'#FFFFFF':'#B7C2CE'; ctx.font='11px Consolas,monospace';
+    ctx.fillText(String(c.rank), mx+26, y);
+    ctx.fillText(c.cls.name+(c.isPlayer?'(你)':''), mx+44, y);
+    const dm=c.s-p.s;
+    ctx.fillStyle=c===p?CFG.Accent:'#8B98A8';
+    ctx.font='12px Consolas,monospace'; ctx.textAlign='right';
+    ctx.fillText(fmt(dm,0)+'m', mx+mw-8, y); ctx.textAlign='left';
+  }
+
+  /* ---- 左下：自己状态 ---- */
+  const by=H-(document.getElementById('debug').classList.contains('on')?196:0)-134;
+  ctx.fillStyle='rgba(10,13,17,0.78)'; ctx.fillRect(10,by,268,124);
+  ctx.strokeStyle='#2C343E'; ctx.strokeRect(10,by,268,124);
+  ctx.fillStyle=p.cls.color; ctx.font='bold 13px "Microsoft YaHei",sans-serif';
+  ctx.fillText(p.cls.name+' · '+p.name + (isSea(p.s)?'　🌊海域':'　🛣陆路'), 20, by+20);
+  /* 血条 */
+  ctx.fillStyle='#2A323B'; ctx.fillRect(20,by+28,180,9);
+  ctx.fillStyle=p.hp<CFG.LowHpFrac*p.cls.hp?'#E04B4B':'#7FB069';
+  ctx.fillRect(20,by+28,180*clamp(p.hp/p.cls.hp,0,1),9);
+  ctx.fillStyle='#C9D3DE'; ctx.font='11px Consolas,monospace';
+  ctx.fillText('hp '+p.hp.toFixed(0)+'/'+p.cls.hp, 206, by+37);
+  ctx.font='11px "Microsoft YaHei",sans-serif'; ctx.fillStyle='#AEB8C4';
+  const cd=Math.max(0,p.cdUntil-state.elapsed);
+  ctx.fillText('Q '+p.cls.active+'　'+(cd>0?('CD '+cd.toFixed(1)+'s'):'就绪'), 20, by+56);
+  ctx.fillText('道具 '+(p.held>0?'持有 1（左键/空格发射）':'空')+'　·　任意方向', 20, by+72);
+  /* R-33：补偿百分比只对获得者显示；领先者只读「有人在追」，无数字 */
+  if(p.isLag && p.bCatchup>0.0001){
+    ctx.fillStyle=CFG.Accent;
+    ctx.fillText('追赶补偿 +'+(p.bCatchup*100).toFixed(1)+'%', 20, by+90);
+  } else if(p.rank===1){
+    const chasing=cars.some(function(c){ return c!==p && c.bCatchup>0.0001; });
+    ctx.fillStyle=chasing?'#8B98A8':'#5F6B78';
+    ctx.fillText(chasing?'有人在追':'·', 20, by+90);
+  } else {
+    ctx.fillStyle='#5F6B78'; ctx.fillText('·', 20, by+90);
+  }
+  if(p.grind){ ctx.fillStyle='#FFE9A8'; ctx.textAlign='right'; ctx.fillText('磨墙 · 掉速', 268, by+90); ctx.textAlign='left'; }
+  if(p.squeeze){ ctx.fillStyle='#C9D3DE'; ctx.textAlign='right'; ctx.fillText('被挤压', 268, by+72); ctx.textAlign='left'; }
+  if(p.underwater){ ctx.fillStyle='#9FB6C9'; ctx.textAlign='right'; ctx.fillText('水下隐身', 268, by+56); ctx.textAlign='left'; }
+
+  /* 与幽灵车实时秒差：时间轴口径，四处同源同值；不靠颜色编码，用 ↑/↓ + +/− 冗余表达 */
+  if(state.best && state.best.samples && state.best.samples.length){
+    const gd = ghostDeltaSeconds(state.best.samples, p.s, state.elapsed);
+    if(gd!==null){
+      ctx.fillStyle='#94A2B2'; ctx.font='12px "Microsoft YaHei",sans-serif'; ctx.textAlign='left';
+      ctx.fillText('与最佳', 20, by+108);
+      ctx.fillStyle='#F2F5F8'; ctx.font='12px Consolas,monospace';
+      ctx.textAlign='right'; ctx.fillText((gd<=0?'↑ ':'↓ ')+fmt(gd,1)+'s', 268, by+108); ctx.textAlign='left';
+    }
+  }
+
+  /* 操作提示（左下角，禁区外） */
+  ctx.fillStyle='rgba(140,152,166,0.65)'; ctx.font='10px "Microsoft YaHei",sans-serif';
+  ctx.fillText('↑油门 ↓刹车 ←→转向 · 急弯：全速必蹭墙，松油门或朝弯心打方向 · 鼠标发射 · Q技能 · P暂停 · D调试 · H说明', 10, H-6-(document.getElementById('debug').classList.contains('on')?196:0));
+
+  /* 示范模式顶栏字幕（零外部依赖，脚本化循环演示） */
+  if(state.demo){
+    ctx.fillStyle='rgba(255,212,0,0.95)'; ctx.font='bold 13px "Microsoft YaHei",sans-serif'; ctx.textAlign='center';
+    ctx.fillText('示范（自动循环）：① 全速冲急弯、不转向 → 被甩向外侧护栏、蹭墙掉速（看火花）　② 进弯前松油门 + 朝弯心打方向 → 干净通过　· 按任意键退出', W/2, 22);
+    ctx.textAlign='left';
+  }
+}
+
+/* =====================================================================
+   开局 / 说明 / 结果 面板
+   ===================================================================== */
+function showStart(){
+  /* 回到开局面板：清掉上一局的终局/暂停态，避免 Enter 无法开局 */
+  state.started=false; state.finished=false; state.paused=false;
+  state.helpOpen=false; state.resultShown=false; state.demo=false;
+  cars=[]; projectiles=[]; sparks=[];
+  const el=document.getElementById('panel');
+  let cards='';
+  for(let i=0;i<CFG.Classes.length;i++){
+    const c=CFG.Classes[i];
+    cards += '<div class="card'+(i===0?' sel':'')+'" data-i="'+i+'">'+
+      '<div class="nm"><span class="sw" style="background:'+c.color+'"></span>'+c.name+'</div>'+
+      '<div class="li">hp '+c.hp+'　v1 '+c.v1.toFixed(1)+' m/s</div>'+
+      '<div class="li">主动：'+c.active+'</div>'+
+      '<div class="li">被动：'+c.passive+'</div></div>';
+  }
+  el.innerHTML =
+    '<h1>竞速灰盒垂直切片 · 过弯火花</h1>'+
+    '<p>单文件 / 零依赖 / <span class="tag">双击 index.html 即可玩</span>。目标：验证「这局竞速有没有竞争欲望」。这是 Phase 4 预制作灰盒，不是最终产品。</p>'+
+    '<h2>选择载具（1–4 或点击，四台载具全部上场，你选 1 台、AI 3 台）</h2>'+
+    '<div class="cards" id="cards">'+cards+'</div>'+
+    '<button class="btn" id="btnStart">开始比赛　(Enter / 空格)</button>'+
+    '<button class="btn ghost" id="btnDemo" style="margin-left:8px">看示范（自动循环）</button>'+
+    '<button class="btn ghost" id="btnHelp" style="margin-left:8px">操作与规则说明 (H)</button>'+
+    '<button class="btn ghost" id="btnAudioStart" style="margin-left:8px">音效：'+(state.audioOn?'开':'关')+'</button>'+
+    '<div id="helpBox" style="display:none">'+helpHTML()+'</div>';
+  document.getElementById('overlay').classList.remove('off');
+  const cardsEl=document.getElementById('cards');
+  cardsEl.addEventListener('click',function(e){
+    const card=e.target.closest ? e.target.closest('.card') : null;
+    if(!card) return;
+    const all=cardsEl.querySelectorAll('.card');
+    for(let i=0;i<all.length;i++) all[i].classList.remove('sel');
+    card.classList.add('sel');
+    state.selClass=parseInt(card.getAttribute('data-i'),10);
+  });
+  if(!state) { /* 首次：建立最小 state 以承载选择 */ }
+  state.selClass = 0;
+  document.getElementById('btnStart').addEventListener('click',function(){ newMatch(state.selClass||0); unlockAudio(); });
+  document.getElementById('btnAudioStart').addEventListener('click',function(){
+    state.audioOn=!state.audioOn;
+    if(state.audioOn){ state.audioUnlocked=true; ensureAudio(); }   // 覆盖「关掉再打开」的缓存短路
+    this.textContent='音效：'+(state.audioOn?'开':'关');
+  });
+  document.getElementById('btnHelp').addEventListener('click',function(){
+    const b=document.getElementById('helpBox');
+    b.style.display = b.style.display==='none'?'block':'none';
+  });
+  document.getElementById('btnDemo').addEventListener('click',function(){ startDemo(); });
+}
+function helpHTML(){
+  return '<h2>操作</h2>'+
+    '<p>方向键 / WASD 驾驶（↑＝油门、↓＝刹车、←→＝转向）；鼠标瞄准 + 左键 / 空格发射道具（任意方向）；<b>Q</b> 主动技能；<b>1–4</b> 或开局界面选载具；<b>P</b> 暂停；<b>D</b> 调试面板；<b>H</b> 本说明。调试面板提供 0.5x / 1x / 2x / 4x 时间倍率与「跳到最后 30 秒」。<br><span style="color:#8B98A8">注：规格同时要求「WASD 的 D 右转」与「D 开调试面板」，本切片一字两用：<b>单击 D</b> 切换调试面板，<b>按住 D</b> 仍作右转；也可用 ←/→ 方向键转向，完全避开重叠。</span></p>'+
+    '<h2>过弯磨墙火花 —— 本轮新增的硬需求，三条硬约束</h2>'+
+    '<div class="rules"><ol>'+
+    '<li><b>磨墙不产生 <code>on_hit</code>、不进 <code>hit_log</code>、不扣血，掉速是唯一代价。</b><br>理由：持续接触若每帧触发命中事件，会污染「受害者键聚合」的 6s 递减窗口 —— 环境伤害把窗口吃满后，真正的集火反而按 50% 结算却没人集火，集火防线（R3）被环境噪声废掉。P2「每条路都付代价」由掉速承担，不用扣血。<br><span class="tag">调试面板「磨墙自证」实时显示 Δhp / Δlog，应为 0 / 0。</span></li>'+
+    '<li><b>与「车-车挤压」的反馈严格分离。</b><br>车-墙摩擦 ＝ 方向性火花（向后拖尾）+ 掉速；车-车挤压 ＝ 车体侧倾 + 连续震频。<b>不许共用同一套粒子 / 音效通道</b>，否则玩家分不清「我被挤了」还是「我蹭墙了」。这是两条正确规则在交互处叠加，必须拆开定责。持续接触态带 <code>contact_target ∈ {Wall, Vehicle, Prop}</code> 用来拆开定责：火花只读 Wall。<br><span class="tag">灰盒切片：挤压暂为零粒子（侧倾 + 震频），第三项粒子通道待 Unity 补回，见 art-bible 附录 C.8；「不许共用」≠「不许有」，R-26 是 L+ 正式机制。</span></li>'+
+    '<li><b>封顶饱和（PR-2：表演可以撒谎，但必须留字据）。</b><br>发射率每车 18/s、全场 72/s；<b>0.20s 建立期</b>由「持续接触态已持续时间」驱动，E(t)=18×min(1,t_c/0.20)，之后恒 18/s —— <b>完全不读摩擦深度、不读车速</b>。超过 0.20s 后唯一继续变化的量是「火花发射总时长」；强度 / 密度 / 亮度 / 色相 / 单粒子参数全部冻结。字据：忠实映射会把「蹭得更狠」如实翻译成「火花更猛」，把注意力从驾驶拉到特效、暴露未标定的接触深度，还会把「代价」演成「奖励」（触碰 PR-1）。渐进起手 0.20s 是「持续磨墙 ≠ 撞墙爆炸」的第一道保险。火花单色恒定 #FFF3D6、无光晕无屏闪、不落到 UI 独占色 #FFD400。</li>'+
+    '</ol></div>'+
+    '<h2>怎么试出火花 / 怎么避免一直磨墙</h2>'+
+    '<p>赛道有缓弯 / 中弯 / 急弯（世界层有小标签）。<b>全速且「不转向」地冲进急弯，必被甩向外侧护栏、蹭墙出火花并掉速</b>；<b>只要朝弯心打方向（←/→ 或 A/D 转向），就能把车拉回线内、干净通过</b>；也可进弯前松油门或点刹车把速度降到约 13 m/s 以下兜底。转向权限已还给玩家——转对方向是关键，不转向或转反方向都会一直贴外侧护栏。AI 同样适用：AI 过弯也会 understeer、也必须出火花，<b>没有 AI 免疫</b>。不确定手感？开局界面点「<b>看示范（自动循环）</b>」看一遍脚本化演示。</p>'+
+    '<h2>规则速览</h2>'+
+    '<p>单局 220s / 4200m 换算；四车共用一套基础物理，只调 m_class 与技能。速度修饰栈四层（冲刺挂 ① 层，不解除 cap）。伤害按受害者键聚合：6s 窗口内第 2 击 70%、第 3 击起 50%，归零后 3s 免疫；归零不淘汰，cap 55% / 5s / 掉进度 10m，重复归零递减 5.0/55%/10m → 3.5/70%/6m → 2.5/80%/4m。恰好 1 种攻击道具（45 伤害，派发即入栏，持有上限 1，后 50% 派发权重 ×1.5 只改变归谁、不改变全场总量）。补偿按与前车时间差线性给、上限 +5%，差 &lt;0.5s 归零，<b>百分比只对获得者显示</b>。<b>最后 20s 四件事同刻</b>：禁攻击 + 派发停止 + 加速带开放 + 持有道具自动兑换加速。</p>'+
+    '<p>中段分叉三条路：<b>平均亮度对齐</b>，窄路只用碎石 / 障碍剪影表现「更危险」，不给金色 / 光柱 / 箭头 / 亮度差 / 「更快」字样（PR-1、R-03）。窄近路 4m 走廊强制互穿容差 0.50，走廊内不许完成超车。<b>后段有一条约 550m 的共享海域（赛道带变蓝、标「海域 SEA」）</b>：陆上车（大运 / 飞机 / 赛车）泡水里被拖慢（v1×0.80），<b>只有潜艇在水里加速（v1×1.15）且能按 Q 下潜隐身</b>——这是潜艇唯一的专属优势，选潜艇过海路能拉开身位。</p>'+
+    '<p style="color:#7E8B9A">顶部 CFG 集中所有可调参数，每项标注 [锁定] / [推算] / [推断]。大量数值是占位推断值，待手感 / 美术回填。</p>';
+}
+function showHelpInGame(){
+  const el=document.getElementById('panel');
+  el.innerHTML='<h1>操作与规则说明</h1><div>'+helpHTML()+'</div>'+
+    '<button class="btn" id="btnCloseHelp">返回比赛 (H / Esc)</button>';
+  document.getElementById('overlay').classList.remove('off');
+  state.paused=true; state.helpOpen=true;
+  document.getElementById('btnCloseHelp').addEventListener('click',closeHelp);
+}
+function closeHelp(){
+  document.getElementById('overlay').classList.add('off');
+  state.helpOpen=false; if(!state.finished) state.paused=false;
+}
+function hideOverlay(){ document.getElementById('overlay').classList.add('off'); }
+function buildResultIfNeeded(reset){ if(reset) state.resultShown=false; }
+function showResult(){
+  if(state.resultShown) return;
+  state.resultShown=true;
+  const p=cars[state.playerIdx];
+  /* 本局成绩：全项目唯一存档写入点。只在成绩更好且轨迹可回放时覆盖历史最佳。 */
+  const cur={
+    version:1,
+    finishTime:(p && p.finished && p.finishTime>=0) ? p.finishTime : -1,
+    maxS:Math.max(state.maxPlayerS||0, p?p.s:0),
+    samples:state.ghostSamples.slice()
+  };
+  const prev=state.best;
+  state.newBest = (cur.samples.length>=2) && betterThan(cur, prev);
+  if(state.newBest){ state.best=cur; saveBest(cur); }
+  const grade = (p.rank===1 && state.newBest) ? 'S' :
+                ((p.rank===1 || (p.rank===2 && state.newBest)) ? 'A' : 'B');
+  const bestTxt = state.best
+    ? (state.best.finishTime>=0 ? state.best.finishTime.toFixed(1)+'s' : state.best.maxS.toFixed(0)+'m')
+    : '—';
+  let ghostTxt = '';
+  if(prev && prev.samples && prev.samples.length>=2){
+    const gd = ghostDeltaSeconds(prev.samples, p.s, state.elapsed);
+    if(gd!==null) ghostTxt='<p>与最佳　'+(gd<=0?'↑ 快 ':'↓ 慢 ')+Math.abs(gd).toFixed(1)+'s</p>';
+  }
+  const el=document.getElementById('panel');
+  let rows='';
+  for(let i=0;i<state.order.length;i++){
+    const c=state.order[i];
+    rows += '<p><span style="color:'+c.cls.color+'">■</span> 第 '+c.rank+' 名　'+c.cls.name+' · '+c.name+
+            '　进度 '+(c.s/CFG.TrackLength*100).toFixed(1)+'%　归零 '+c.zeroCount+' 次'+
+            (c.finished?('　完赛 '+c.finishTime.toFixed(1)+'s'):'')+'</p>';
+  }
+  el.innerHTML='<h1>本局结束 · 220s</h1>'+rows+
+    '<h2>本局成绩　评级 '+grade+'</h2>'+
+    '<p>你的名次　第 '+p.rank+' 名　·　进度 '+p.s.toFixed(0)+'/'+CFG.TrackLength+'m　·　'+
+    (p.finished && p.finishTime>=0 ? '完赛用时 '+p.finishTime.toFixed(1)+'s' : '本局用时 '+state.elapsed.toFixed(1)+'s')+'</p>'+
+    '<p>最佳完赛成绩　'+bestTxt+(state.newBest?'　★ 新纪录':'')+'</p>'+ghostTxt+
+    '<p style="color:#8B98A8">'+(state.newBest
+      ? '下一局会有半透明紫色的「自己」陪跑，HUD 实时显示与最佳的时间差。'
+      : '按 s 排序（4200m 换算口径）。归零不淘汰，四车全程未卡死。')+'</p>'+
+    '<button class="btn" id="btnRestart">再来一局 (R)</button>';
+  document.getElementById('overlay').classList.remove('off');
+  document.getElementById('btnRestart').addEventListener('click',function(){ showStart(); });
+}
+
+/* =====================================================================
+   输入
+   ===================================================================== */
+window.addEventListener('keydown',function(e){
+  const code=e.code||'';
+  state.keys[code]=true;
+  if(state.demo){ exitDemo(); return; }   // 示范模式：任意键退出
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].indexOf(code)>=0) e.preventDefault && e.preventDefault();
+  if(e.repeat) return;
+  if(code==='KeyP' && !state.helpOpen && state.started) state.paused=!state.paused;
+  if(code==='KeyD'){ toggleDebug(); }
+  /* 开局面板上 H/Esc 只展开内嵌说明，不切走选车界面 */
+  if(code==='KeyH' || code==='Escape'){
+    if(!state.started){ const b=document.getElementById('helpBox'); if(b) b.style.display = b.style.display==='none'?'block':'none'; }
+    else if(state.helpOpen) closeHelp();
+    else showHelpInGame();
+  }
+  if(code==='KeyR' && state.finished) showStart();
+  if(code==='KeyQ' && state.started && !state.paused && !state.finished && !state.helpOpen) useActive(cars[state.playerIdx], state.elapsed);
+  if(code==='Space' && !state.started && !state.helpOpen &&
+     !document.getElementById('overlay').classList.contains('off')){
+    newMatch(state.selClass||0); unlockAudio();   // 开局面板：空格与 Enter 同义（按钮标签所写）
+    return;
+  }
+  if(code==='Space' && state.started && !state.paused && !state.finished && !state.helpOpen &&
+     document.getElementById('overlay').classList.contains('off')){
+    const p=cars[state.playerIdx], ps=screenOf(p.s,p.d);
+    const ang=Math.atan2(state.mouse.y-ps.y, state.mouse.x-ps.x);
+    fire(p,ang);
+  }
+  if(/^Digit[1-4]$/.test(code) && !state.finished){
+    /* 1–4 选载具：仅在开局面板可见时生效，避免局中误触 */
+    if(!document.getElementById('overlay').classList.contains('off')){
+      const all=document.querySelectorAll('#cards .card');
+      const i=parseInt(code.slice(5),10)-1;
+      for(let k=0;k<all.length;k++) all[k].classList.remove('sel');
+      if(all[i]) all[i].classList.add('sel');
+      state.selClass=i;
+    }
+  }
+  if(code==='Enter' && !document.getElementById('overlay').classList.contains('off') && !state.helpOpen && !state.finished){
+    newMatch(state.selClass||0); unlockAudio();
+  }
+});
+window.addEventListener('keyup',function(e){ state.keys[e.code||'']=false; });
+cv.addEventListener('mousemove',function(e){
+  state.mouse.x=e.clientX; state.mouse.y=e.clientY;
+});
+cv.addEventListener('mousedown',function(e){
+  if(state.demo){ exitDemo(); return; }   // 示范模式：点击退出
+  if(e.button!==0 || !state.started || state.paused || state.finished || state.helpOpen) return;
+  if(!document.getElementById('overlay').classList.contains('off')) return;
+  const p=cars[state.playerIdx], ps=screenOf(p.s,p.d);
+  const ang=Math.atan2(state.mouse.y-ps.y, state.mouse.x-ps.x);
+  fire(p,ang);
+});
+
+/* =====================================================================
+   调试面板
+   ===================================================================== */
+function toggleDebug(){
+  const el=document.getElementById('debug');
+  el.classList.toggle('on');
+  document.getElementById('tip').style.display = el.classList.contains('on')?'block':'none';
+  buildDebugButtons();
+}
+function buildDebugButtons(){
+  const tb=document.getElementById('dbgTimeBtns');
+  let h='';
+  CFG.TimeScales.forEach(function(t){ h+='<button data-ts="'+t+'" class="'+(state.timeScale===t?'act':'')+'">'+t+'x</button> '; });
+  h+='<button id="btnSkip">跳到最后 '+CFG.SkipToLast+' 秒</button> <button id="btnPause">'+(state.paused?'继续':'暂停')+'</button>';
+  tb.innerHTML=h;
+  tb.querySelectorAll('[data-ts]').forEach(function(b){
+    b.onclick=function(){ state.timeScale=parseFloat(b.getAttribute('data-ts')); buildDebugButtons(); };
+  });
+  document.getElementById('btnSkip').onclick=function(){ skipTo(CFG.MatchSeconds-CFG.SkipToLast); };
+  document.getElementById('btnPause').onclick=function(){ state.paused=!state.paused; buildDebugButtons(); };
+
+  const sb=document.getElementById('dbgSparkBtns');
+  sb.innerHTML='<button id="btnSpark" class="'+(state.sparksOn?'act':'')+'">火花 '+(state.sparksOn?'开':'关')+'</button> '+
+               '<button id="btnAudio" class="'+(state.audioOn?'act':'')+'">音效 '+(state.audioOn?'开':'关')+'</button> '+
+               '<span style="color:#6F7C8B">FX_WallScrape_Enabled（独立开关，不与 R-26 挤压共用）｜车-墙：火花+掉速 / 车-车：侧倾+震频（灰盒零粒子）</span>';
+  document.getElementById('btnSpark').onclick=function(){ state.sparksOn=!state.sparksOn; buildDebugButtons(); };
+  document.getElementById('btnAudio').onclick=function(){ state.audioOn=!state.audioOn; if(state.audioOn) ensureAudio(); buildDebugButtons(); };
+
+  const mb=document.getElementById('dbgMiscBtns');
+  let mh='AI 难度：';
+  ['easy','normal','hard'].forEach(function(d){ mh+='<button data-ai="'+d+'" class="'+(state.aiDiff===d?'act':'')+'">'+d+'</button> '; });
+  mh+='<br><button id="btnWeight" class="'+(state.weightCompOn?'act':'')+'">派发权重 ×1.5 '+(state.weightCompOn?'开':'关')+'</button> '+
+      '<button id="btnForbid" class="'+(state.showForbid?'act':'')+'">显示中心禁区</button>';
+  mb.innerHTML=mh;
+  mb.querySelectorAll('[data-ai]').forEach(function(b){
+    b.onclick=function(){ state.aiDiff=b.getAttribute('data-ai'); applyAIDifficulty(); buildDebugButtons(); };
+  });
+  document.getElementById('btnWeight').onclick=function(){ state.weightCompOn=!state.weightCompOn; buildDebugButtons(); };
+  document.getElementById('btnForbid').onclick=function(){ state.showForbid=!state.showForbid; buildDebugButtons(); };
+
+  const tb2=document.getElementById('dbgTestBtns');
+  tb2.innerHTML=
+    '<button id="tZero">强制归零(玩家)</button> <button id="tHit">命中玩家 45</button><br>'+
+    '<button id="tDash">强制冲刺(玩家)</button> <button id="tGrind">强制急弯全速</button><br>'+
+    '<button id="tItem">给玩家 1 枚道具</button> <button id="tClearLog">清空 hit_log</button>';
+  document.getElementById('tZero').onclick=function(){ forceZero(cars[state.playerIdx]); };
+  document.getElementById('tHit').onclick=function(){ on_hit(cars[1], cars[state.playerIdx], CFG.ItemDamage, state.elapsed); };
+  document.getElementById('tDash').onclick=function(){ cars[state.playerIdx].dashUntil=state.elapsed+CFG.DashSeconds; };
+  document.getElementById('tGrind').onclick=function(){
+    const p=cars[state.playerIdx];
+    p.s=CFG.Corners[1].s-CFG.Corners[1].len*0.5; p.vDrive=CFG.VBaseTrack*p.cls.mClass;
+    p.laneOffset=0; p.drift=0; p.grind=false; state.keys['ArrowUp']=true;
+  };
+  document.getElementById('tItem').onclick=function(){ cars[state.playerIdx].held=1; cars[state.playerIdx].heldFlash=0.35; };
+  document.getElementById('tClearLog').onclick=function(){ cars[state.playerIdx].hit_log.length=0; };
+
+  const gb=document.getElementById('dbgGlobalBtns');
+  gb.innerHTML='<button id="gRestart">重开一局</button> <button id="gHelp">说明 (H)</button> <button id="gResult">直接看结果</button>';
+  document.getElementById('gRestart').onclick=function(){ showStart(); };
+  document.getElementById('gHelp').onclick=function(){ showHelpInGame(); };
+  document.getElementById('gResult').onclick=function(){ state.elapsed=CFG.MatchSeconds; state.finished=true; showResult(); };
+}
+function forceZero(c){
+  c.hp=0; applyZero(c, cars[(c.idx+1)%cars.length], state.elapsed);
+  dbg.forcedZeroCount++;
+}
+
+/* 「跳到最后 30 秒」：真实快进模拟（不瞬移、不破坏物理状态），保持四车状态自洽 */
+function skipTo(target){
+  if(!state || !state.started || target<=state.elapsed) return;
+  const wasPaused=state.paused; state.paused=false;
+  state.slowRemain=0; state.camPush=0;   // 快进不带着 R-30 慢放走
+  const FIXED=1/60;
+  let guard=0;
+  while(state.elapsed<target && guard<20000){ step(FIXED); guard++; }
+  state.paused=wasPaused;
+  buildDebugButtons();
+}
+
+function updateDebugReadout(){
+  const el=document.getElementById('dbgRead');
+  if(!el || !state) return;
+  if(!state.started || cars.length===0){ el.textContent='尚未开局。选择载具后点「开始比赛」。'; return; }
+  const p=cars[state.playerIdx], st=p.stack;
+  const rem=Math.max(0,CFG.MatchSeconds-state.elapsed);
+  let s='';
+  s+='t '+state.elapsed.toFixed(1)+'/'+CFG.MatchSeconds+'s  剩 '+rem.toFixed(1)+'s  倍率 '+state.timeScale+'x  FPS '+dbg.fps.toFixed(0)+'\n';
+  s+='终局 '+(state.finalPhase?'是':'否')+'  赛程 '+(state.raceProgress*100).toFixed(1)+'%  R-32 '+(state.huntStage===2?'红脉冲':state.huntStage===1?'标记':'未激活')+'\n';
+  s+='── 玩家 ─────────────────────────────\n';
+  s+='车 '+p.cls.name+'  名次 '+p.rank+'/'+cars.length+'  距前车 '+p.gapAhead.toFixed(0)+'m  hp '+p.hp.toFixed(0)+'/'+p.cls.hp+'\n';
+  s+='v1 '+st.v1.toFixed(2)+'  v2 '+st.v2.toFixed(2)+'  v3 '+st.v3.toFixed(2)+'  v4 '+st.v4.toFixed(2)+'\n';
+  s+='v  '+p.v.toFixed(2)+'  cap '+st.cap.toFixed(2)+'  boost '+st.boost.toFixed(2)+'  m_dash '+st.mDash.toFixed(2)+'\n';
+  s+='d  '+fmt(p.d,2)+'  drift '+fmt(p.drift,2)+'  κ '+p.lastKappa.toFixed(4)+'  路线 '+['主赛道','窄近路','宽远路'][p.route]+'\n';
+  s+='磨墙态 '+(p.grind?'是':'否')+'  深度 '+p.grindDepth.toFixed(2)+'  持续 '+p.grindTime.toFixed(2)+'s  名次 '+p.rank+'\n';
+  s+='补偿 '+(p.bCatchup*100).toFixed(1)+'%'+(p.isLag?' (后50%)':'')+'  hit_log '+p.hit_log.length+'  归零 '+p.zeroCount+' 次\n';
+  s+='免疫 '+(state.elapsed<p.immune_until?'是':'否')+'  惩罚 '+(state.elapsed<p.penaltyUntil?'是':'否')+'  护盾 '+(state.elapsed<p.shield_until?'是':'否')+'  冲刺 '+(state.elapsed<p.dashUntil?'是':'否')+'\n';
+  s+='── 硬约束自证 ───────────────────────\n';
+  s+='磨墙 Δhp '+dbg.grindDeltaHp.toFixed(0)+'  Δhit_log '+dbg.grindDeltaLog+'  (期望 0 / 0)\n';
+  s+='磨墙累计帧 '+dbg.grindFrames+'  全场 on_hit 次数 '+dbg.hitEvents+'\n';
+  s+='火花 上限 '+CFG.SparkRateCap+'/s/车 · '+CFG.SparkRateGlobalCap+'/s 全场  本帧 '+dbg.lastFrameSparks+'  场景粒子 '+sparks.length+'\n';
+  s+='── 四车 ─────────────────────────────\n';
+  for(let i=0;i<cars.length;i++){
+    const c=cars[i];
+    s+=c.name.slice(0,6).padEnd(7)+' #'+c.rank+'  s '+c.s.toFixed(0).padStart(4)+'m  v '+c.v.toFixed(1).padStart(4)+
+       '  hp '+c.hp.toFixed(0).padStart(3)+'  磨'+(c.grind?'Y':'N')+'  挤'+(c.squeeze?'Y':'N')+
+       '  花'+c.sparkThisFrame+'  log'+c.hit_log.length+'\n';
+  }
+  el.textContent=s;
+
+  const au=document.getElementById('dbgAudit');
+  if(au){
+    au.textContent=
+      '派发节拍 '+state.tickCount+'  全场道具 '+dbg.itemsEmitted+' 枚\n'+
+      '（权重开关只改归属，不改全场总量；关掉再跑同样节拍数比对）\n'+
+      '强制归零注入 '+dbg.forcedZeroCount+' 次（自测用）\n'+
+      '中心禁区 x22–78% / y29–71%：UI 全部在外\n'+
+      '冲刺挂 ① 层：惩罚期 v3 = v1′×cap，不解除';
+  }
+}
+
+/* =====================================================================
+   主循环（fixed timestep accumulator）
+   ===================================================================== */
+let acc=0, lastT=0, fpsAcc=0, fpsCnt=0;
+function loop(t){
+  if(!lastT) lastT=t;
+  let raw=(t-lastT)/1000; lastT=t;
+  if(raw>0.05) raw=0.05;
+  fpsAcc+=raw; fpsCnt++;
+  if(fpsAcc>=0.5){ dbg.fps=fpsCnt/fpsAcc; fpsAcc=0; fpsCnt=0; }
+  /* R-30：0.15s 现实时间，按真实 dt 递减，与模拟时间缩放解耦 */
+  if(state.slowRemain>0) state.slowRemain = Math.max(0, state.slowRemain - raw);
+  if(!state.helpOpen){
+    /* R-30 慢放：只压缩「模拟时间」，按现实时间 ≤0.15s 退出 */
+    const scale = state.timeScale * (state.slowRemain>0 ? CFG.ZeroSlowScale : 1);
+    acc += raw*scale;
+    const FIXED=1/60;
+    let n=0;
+    while(acc>=FIXED && n<12){ step(FIXED); acc-=FIXED; n++; }
+    if(n>=12) acc=0;
+  }
+  draw();
+  if(document.getElementById('debug').classList.contains('on')) updateDebugReadout();
+  requestAnimationFrame(loop);
+}
+
+/* =====================================================================
+   启动 + 供 headless 自测的调试钩子（不影响游玩）
+   ===================================================================== */
+window.GBX = {
+  CFG:CFG,
+  state:function(){ return state; },
+  cars:function(){ return cars; },
+  sparks:function(){ return sparks; },
+  projectiles:function(){ return projectiles; },
+  dbg:dbg,
+  newMatch:newMatch, step:step, speedStack:speedStack, on_hit:on_hit,
+  computeRanks:computeRanks, forceZero:forceZero, skipTo:skipTo,
+  kappaAt:kappaAt, yc2:yc2, roadGeom:roadGeom, draw:draw, makeRng:makeRng,
+  fire:fire, useActive:useActive, enterFinalPhase:enterFinalPhase,
+  contactTarget:CONTACT_TARGET, emitGrindSparks:emitGrindSparks, spawnGrindSpark:spawnGrindSpark,
+  updateCarPhysics:updateCarPhysics, makeCar:makeCar, kappaSigned:kappaSigned, centerAt:centerAt,
+  isSea:isSea, startDemo:startDemo, demoInput:demoInput,
+  /* 竞争改造新增：纯函数与状态读取，供 headless 断言独立复算（不引用被测常量） */
+  aiPressureK:aiPressureK, aiLeadCapped:aiLeadCapped, betterThan:betterThan,
+  ghostAt:ghostAt, ghostTimeAt:ghostTimeAt, ghostDeltaSeconds:ghostDeltaSeconds,
+  loadBest:loadBest, saveBest:saveBest, unlockAudio:unlockAudio,
+  playCompete:playCompete, drawGhost:drawGhost,
+  ghostSamples:function(){ return state.ghostSamples; },
+  best:function(){ return state.best; }
+};
+
+/* 最小 state 占位，供开局面板点击使用（newMatch 会整体替换） */
+state = {
+  started:false,
+  elapsed:0, finished:false, paused:false, finalPhase:false, finalTriggered:false,
+  timeScale:1, seed:1, rng:makeRng(1), dispatchRng:makeRng(2),
+  playerIdx:0, mouse:{x:0,y:0}, aimAngle:0,
+  keys:{}, camS:0, camPush:0, slowRemain:0, attribution:null, attrUntil:0,
+  banner:null, bannerUntil:0, bannerLast:-99, bannerCount:0, bannerColors:[],
+  finalBannerUntil:0, lowHpFade:0, lowHpWas:false, swapLog:[], zeroEvents:[],
+  huntStage:0, raceProgress:0, order:[], leader:null, sparksOn:CFG.SparksOn, audioOn:CFG.AudioOn,
+  weightCompOn:true, aiDiff:'normal', showForbid:false, helpOpen:false,
+  sparkGlobalAcc:0, dispatchAcc:0, tickCount:0, audio:null, grindSfxAt:-1,
+  squeezeSfxAt:-1, resultShown:false, selClass:0, anyGrind:false, prevRanks:[1,2,3,4], demo:false,
+  /* 与 newMatch 的 state 逐字段同步（竞争改造新增） */
+  best:null, ghostSamples:[], ghostAcc:0, maxPlayerS:0, newBest:false,
+  nearWarnAt:-99, competeAt:-99, resultSfxPlayed:false, audioUnlocked:false
+};
+showStart();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
