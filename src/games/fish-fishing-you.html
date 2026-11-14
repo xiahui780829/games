@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#22312E">
+<title>鱼也在钓你 · The Fish Are Fishing You</title>
+<meta name="description" content="一个关于耐心、怀疑与假动作的小游戏。你以为是你在钓鱼。">
+<style>
+:root{
+  --paper:#F7F1E6;
+  --ink:#22312E;
+  --ink2:#5E6D68;
+  --line:rgba(34,49,46,.16);
+  --accent:#C9482F;
+  --teal:#1F6B62;
+  --panel:rgba(248,243,233,.90);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:#16211F}
+body{
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+}
+#app{height:100%;display:flex;align-items:center;justify-content:center}
+
+#stage{
+  position:relative;
+  width:1000px;height:640px;
+  transform-origin:center center;
+  border-radius:4px;
+  overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.45);
+  line-height:1.5;
+}
+canvas{display:block;width:1000px;height:640px}
+
+/* ---------- HUD ---------- */
+#hud{
+  position:absolute;top:0;left:0;right:0;
+  padding:20px 26px;
+  display:flex;align-items:flex-start;justify-content:space-between;
+  pointer-events:none;
+}
+.hud-group{display:flex;gap:26px}
+.stat{display:flex;flex-direction:column;line-height:1.1}
+.stat b{font-size:26px;font-weight:500;letter-spacing:-.02em}
+.stat span{font-size:11px;color:rgba(34,49,46,.55);letter-spacing:.12em;margin-top:4px}
+#roundTag{
+  font-size:11px;letter-spacing:.16em;color:rgba(34,49,46,.5);
+  padding-top:8px;
+}
+.icon-btn{
+  pointer-events:auto;
+  font:inherit;font-size:11px;letter-spacing:.1em;
+  color:rgba(34,49,46,.65);
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:999px;
+  width:30px;height:30px;cursor:pointer;
+  transition:.15s;
+}
+.icon-btn:hover{color:var(--ink);border-color:rgba(34,49,46,.35)}
+.icon-btn.off{opacity:.4}
+
+/* ---------- 鱼情面板 ---------- */
+#bars{
+  position:absolute;left:50%;bottom:104px;transform:translateX(-50%);
+  width:290px;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:12px 14px 13px;
+  transition:opacity .22s, transform .22s;
+}
+#bars.hidden{opacity:0;transform:translateX(-50%) translateY(8px);pointer-events:none}
+.who{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
+.who span{font-size:13px}
+.who em{
+  font-style:normal;font-size:10px;letter-spacing:.08em;
+  color:var(--accent);
+  border:1px solid rgba(201,72,47,.35);
+  border-radius:3px;padding:1px 5px;
+}
+.row{display:flex;align-items:center;gap:9px;margin-top:6px}
+.lb{font-size:10px;color:rgba(34,49,46,.5);letter-spacing:.1em;width:28px;flex:none}
+.bar{flex:1;height:5px;background:rgba(34,49,46,.10);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;width:0%;border-radius:99px;transition:width .09s linear}
+.fill-i{background:var(--teal)}
+.fill-w{background:var(--accent)}
+
+/* ---------- 底部 ---------- */
+#bottom{position:absolute;left:0;right:0;bottom:0;padding:0 26px 20px;pointer-events:none}
+#hint{
+  text-align:center;font-size:12px;letter-spacing:.06em;
+  color:rgba(34,49,46,.62);
+  margin-bottom:12px;height:17px;
+  transition:color .15s;
+}
+#hint.hot{color:var(--accent);font-size:14px;letter-spacing:.3em}
+#baitbar{display:flex;justify-content:center;gap:8px;pointer-events:auto}
+.bait{
+  font:inherit;font-size:12px;
+  display:flex;align-items:center;gap:7px;
+  padding:7px 13px 7px 10px;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:999px;
+  color:rgba(34,49,46,.8);
+  cursor:pointer;
+  transition:.15s;
+}
+.bait .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.bait em{font-style:normal;font-size:10px;color:rgba(34,49,46,.45);font-variant-numeric:tabular-nums}
+.bait:hover{border-color:rgba(34,49,46,.32)}
+.bait.active{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.bait.active em{color:rgba(247,241,230,.6)}
+.bait.empty{opacity:.35;pointer-events:none}
+#baitbar.locked .bait{opacity:.28;pointer-events:none}
+
+/* ---------- 提示条 ---------- */
+#toast{
+  position:absolute;left:50%;top:96px;transform:translateX(-50%) translateY(-6px);
+  background:var(--ink);color:var(--paper);
+  font-size:13px;letter-spacing:.02em;
+  padding:9px 18px;border-radius:999px;
+  opacity:0;pointer-events:none;
+  transition:opacity .25s, transform .25s;
+  white-space:nowrap;
+}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ---------- 覆盖层 ---------- */
+#overlay{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(240,231,214,.94);
+  opacity:0;pointer-events:none;
+  transition:opacity .3s;
+}
+#overlay.show{opacity:1;pointer-events:auto}
+.title-card{width:520px;text-align:center}
+.eyebrow{font-size:10px;letter-spacing:.34em;color:rgba(34,49,46,.45);margin-bottom:18px}
+h1{
+  font-family:"Songti SC","Noto Serif SC","SimSun",serif;
+  font-size:56px;font-weight:400;letter-spacing:.04em;
+  margin-bottom:12px;
+}
+.sub{font-size:14px;color:var(--ink2);margin-bottom:34px}
+.rules{
+  display:flex;flex-direction:column;gap:9px;
+  text-align:left;width:330px;margin:0 auto 18px;
+}
+.rules div{display:flex;gap:12px;align-items:baseline}
+.rules b{font-size:10px;font-weight:500;color:var(--accent);letter-spacing:.1em;flex:none}
+.rules span{font-size:12.5px;color:var(--ink2);line-height:1.6}
+.warn{font-size:12px;color:rgba(34,49,46,.5);margin-bottom:26px}
+.primary{
+  font:inherit;font-size:13px;letter-spacing:.14em;
+  color:var(--paper);background:var(--ink);
+  border:none;border-radius:999px;
+  padding:13px 42px;cursor:pointer;
+  transition:.18s;
+}
+.primary:hover{background:#31443F;transform:translateY(-1px)}
+.mem{font-size:11px;color:rgba(34,49,46,.4);margin-top:16px;letter-spacing:.06em}
+
+/* ---------- 结算 ---------- */
+.card{width:460px;text-align:center}
+.card h2{
+  font-family:"Songti SC","Noto Serif SC","SimSun",serif;
+  font-size:34px;font-weight:400;letter-spacing:.02em;
+  margin:6px 0 26px;
+}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:22px}
+.grid div{background:#F5EFE2;padding:14px 10px;line-height:1.2}
+.grid b{display:block;font-size:19px;font-weight:500;font-variant-numeric:tabular-nums}
+.grid span{display:block;font-size:10px;color:rgba(34,49,46,.5);letter-spacing:.1em;margin-top:5px}
+.profile{font-size:13px;color:var(--ink2);margin-bottom:14px}
+.profile strong{color:var(--accent);font-weight:500;font-size:15px}
+.note{
+  font-size:12px;line-height:1.8;color:rgba(34,49,46,.6);
+  border-top:1px solid var(--line);
+  padding-top:16px;margin-bottom:24px;text-align:left;
+}
+.note b{display:block;font-size:10px;letter-spacing:.16em;color:rgba(34,49,46,.42);font-weight:400;margin-bottom:6px}
+.row-btn{display:flex;gap:10px;justify-content:center}
+.ghost{
+  font:inherit;font-size:12px;
+  color:rgba(34,49,46,.55);
+  background:transparent;border:1px solid var(--line);
+  border-radius:999px;padding:12px 22px;cursor:pointer;transition:.15s;
+}
+.ghost:hover{color:var(--ink);border-color:rgba(34,49,46,.3)}
+.small{font-size:11px;color:rgba(34,49,46,.38);margin-top:16px;letter-spacing:.06em}
+
+#rotate{display:none}
+@media (max-width:760px) and (orientation:portrait){
+  #rotate{
+    display:flex;position:absolute;inset:0;
+    align-items:center;justify-content:center;
+    background:#16211F;color:rgba(247,241,230,.6);
+    font-size:12px;letter-spacing:.2em;
+  }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="c" width="1000" height="640"></canvas>
+
+    <div id="hud">
+      <div class="hud-group">
+        <div class="stat"><b id="castNum">12</b><span>抛竿</span></div>
+        <div class="stat"><b id="fishNum">0</b><span>渔获</span></div>
+        <div class="stat"><b id="scoreNum">0</b><span>分</span></div>
+      </div>
+      <div id="roundTag">第 1 轮</div>
+      <button id="soundBtn" class="icon-btn" title="声音">声</button>
+    </div>
+
+    <div id="bars" class="hidden">
+      <div class="who"><span id="fishName">—</span><em id="fishTag"></em></div>
+      <div class="row"><span class="lb">兴趣</span><div class="bar"><i id="barI" class="fill-i"></i></div></div>
+      <div class="row"><span class="lb">警觉</span><div class="bar"><i id="barW" class="fill-w"></i></div></div>
+    </div>
+
+    <div id="bottom">
+      <div id="hint">点一下水面，把钩放下去</div>
+      <div id="baitbar">
+        <button class="bait" data-bait="worm"><i class="dot" style="background:#8C5A3C"></i>蚯蚓<em>6</em></button>
+        <button class="bait" data-bait="corn"><i class="dot" style="background:#D9A32B"></i>玉米<em>4</em></button>
+        <button class="bait" data-bait="lure"><i class="dot" style="background:#7E9BA6"></i>亮片<em>3</em></button>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <div id="overlay" class="show">
+      <div class="title-card">
+        <p class="eyebrow">THE FISH ARE FISHING YOU</p>
+        <h1>鱼也在钓你</h1>
+        <p class="sub">你以为是你在钓鱼。</p>
+        <div class="rules">
+          <div><b>01</b><span>点水面，抛竿</span></div>
+          <div><b>02</b><span>点一下 = 逗竿，鱼会好奇，也会起疑</span></div>
+          <div><b>03</b><span>浮漂沉下去的那一刻，立刻再点一下</span></div>
+        </div>
+        <p class="warn">全程只有一个动作：动。什么时候动，是你的问题。</p>
+        <button id="startBtn" class="primary">开始垂钓</button>
+        <p class="mem" id="memLine"></p>
+      </div>
+    </div>
+
+    <div id="rotate">请横屏，水面比较宽</div>
+  </div>
+</div>
+<script>
+'use strict';
+
+(function () {
+  const W = 1000, H = 640, SURFACE = 262;
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const stage = document.getElementById('stage');
+  const $ = (id) => document.getElementById(id);
+
+  const ui = {
+    castNum: $('castNum'), fishNum: $('fishNum'), scoreNum: $('scoreNum'),
+    roundTag: $('roundTag'), bars: $('bars'), barI: $('barI'), barW: $('barW'),
+    fishName: $('fishName'), fishTag: $('fishTag'), hint: $('hint'),
+    toast: $('toast'), baitbar: $('baitbar'), overlay: $('overlay'),
+    soundBtn: $('soundBtn'), memLine: $('memLine')
+  };
+
+  /* ---------------- 数据 ---------------- */
+
+  const SPECIES = [
+    { id: 'ji',  name: '鲫鱼', likes: 'worm', iRate: 17, wRate: 3.6, jiggleW: 9,  window: 0.62, value: 9,  size: 0.55, weight: 42 },
+    { id: 'li',  name: '鲤鱼', likes: 'corn', iRate: 14, wRate: 4.4, jiggleW: 11, window: 0.55, value: 18, size: 0.85, weight: 28 },
+    { id: 'bai', name: '白条', likes: 'lure', iRate: 30, wRate: 8.5, jiggleW: 13, window: 0.34, value: 8,  size: 0.40, weight: 22 },
+    { id: 'hei', name: '老黑', likes: null,  iRate: 8,  wRate: 2.4, jiggleW: 7,  window: 0.46, value: 52, size: 1.35, weight: 8 }
+  ];
+
+  const BAITS = [
+    { id: 'worm', name: '蚯蚓', color: '#8C5A3C', stock: 6 },
+    { id: 'corn', name: '玉米', color: '#D9A32B', stock: 4 },
+    { id: 'lure', name: '亮片', color: '#7E9BA6', stock: 3 }
+  ];
+
+  const MAX_CASTS = 12;
+  const MEM_KEY = 'fishFishingYou.mem.v1';
+
+  /* ---------------- 鱼塘记忆 ---------------- */
+
+  function blankMem() {
+    return { round: 1, casts: 0, catches: 0, species: {}, beats: 0 };
+  }
+
+  function loadMem() {
+    try {
+      const raw = window.localStorage.getItem(MEM_KEY);
+      if (raw) {
+        const m = JSON.parse(raw);
+        const base = blankMem();
+        return Object.assign(base, m, { species: m.species || {} });
+      }
+    } catch (e) { /* 记为第一天 */ }
+    return blankMem();
+  }
+
+  function spRec(id) {
+    if (!mem.species[id]) mem.species[id] = { spook: 0, caught: 0, baitUse: {} };
+    const r = mem.species[id];
+    if (!r.baitUse) r.baitUse = {};
+    return r;
+  }
+
+  let mem = loadMem();
+
+  /* ---------------- 声音 ---------------- */
+
+  let actx = null, muted = false;
+  function ac() {
+    if (!actx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      actx = new AC();
+    }
+    return actx;
+  }
+  function blip(freq, dur, vol, type) {
+    if (muted) return;
+    try {
+      const a = ac(); if (!a) return;
+      if (a.state === 'suspended') a.resume();
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = type || 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, a.currentTime);
+      g.gain.linearRampToValueAtTime(vol, a.currentTime + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+      o.connect(g); g.connect(a.destination);
+      o.start(); o.stop(a.currentTime + dur + 0.03);
+    } catch (e) { /* 沉默也是钓法 */ }
+  }
+
+  /* ---------------- 状态 ---------------- */
+
+  const G = {
+    mode: 'title',
+    t: 0,
+    castsLeft: MAX_CASTS,
+    score: 0,
+    caughtCount: 0,
+    baits: {},
+    bait: 'worm',
+    baitUsed: 'worm',
+    float: { x: 520, y: SURFACE, startY: 180, dipOff: 0, dipTarget: 0 },
+    rod: { base: { x: 986, y: 706 }, tip: { x: 772, y: 178 }, ctrl: { x: 918, y: 392 }, sag: 26, sagTarget: 26 },
+    fish: null,
+    ripples: [],
+    castT: 0,
+    waitT: 0,
+    resultT: 0,
+    toastT: 0,
+    stats: null
+  };
+
+  function resetRun() {
+    G.castsLeft = MAX_CASTS;
+    G.score = 0;
+    G.caughtCount = 0;
+    G.baits = {};
+    BAITS.forEach(b => G.baits[b.id] = b.stock);
+    G.bait = 'worm';
+    G.fish = null;
+    G.ripples = [];
+    G.float.dipOff = 0;
+    G.float.dipTarget = 0;
+    G.float.x = 520;
+    G.stats = { casts: 0, catches: 0, spooked: 0, jiggle: 0, waitSum: 0, fooled: 0, late: 0, realDips: 0 };
+    ui.roundTag.textContent = '第 ' + mem.round + ' 轮';
+    syncHUD();
+  }
+
+  /* ---------------- 适配 ---------------- */
+
+  function fit() {
+    const s = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.97;
+    stage.style.transform = 'scale(' + s.toFixed(4) + ')';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', fit);
+
+  /* ---------------- 绘制 ---------------- */
+
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, SURFACE + 12);
+    g.addColorStop(0, '#EDDDC3');
+    g.addColorStop(0.55, '#F5E8D2');
+    g.addColorStop(1, '#FCF5E7');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, SURFACE + 12);
+
+    const sx = 722, sy = 138;
+    for (let i = 4; i >= 1; i--) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, 46 + i * 30, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(250,226,182,' + (0.045 * i) + ')';
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(sx, sy, 44, 0, Math.PI * 2);
+    ctx.fillStyle = '#FBEFD5';
+    ctx.fill();
+  }
+
+  function drawHills() {
+    ctx.fillStyle = '#C8D1C3';
+    ctx.beginPath();
+    ctx.moveTo(0, SURFACE + 2);
+    ctx.bezierCurveTo(130, SURFACE - 54, 250, SURFACE - 12, 372, SURFACE - 44);
+    ctx.bezierCurveTo(478, SURFACE - 72, 566, SURFACE - 8, 690, SURFACE - 34);
+    ctx.bezierCurveTo(800, SURFACE - 58, 906, SURFACE - 6, 1000, SURFACE - 26);
+    ctx.lineTo(1000, SURFACE + 2);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#B2BFAF';
+    ctx.beginPath();
+    ctx.moveTo(0, SURFACE + 2);
+    ctx.bezierCurveTo(90, SURFACE - 22, 210, SURFACE - 4, 320, SURFACE - 18);
+    ctx.bezierCurveTo(430, SURFACE - 32, 560, SURFACE - 2, 700, SURFACE - 12);
+    ctx.bezierCurveTo(820, SURFACE - 20, 920, SURFACE + 2, 1000, SURFACE - 4);
+    ctx.lineTo(1000, SURFACE + 2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawWater(t) {
+    const g = ctx.createLinearGradient(0, SURFACE, 0, H);
+    g.addColorStop(0, '#8FB2A7');
+    g.addColorStop(0.22, '#5F8E86');
+    g.addColorStop(0.58, '#3C6862');
+    g.addColorStop(1, '#223F3C');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, SURFACE, W, H - SURFACE);
+
+    for (let i = 0; i < 26; i++) {
+      const y = SURFACE + 12 + i * 15;
+      const w = 74 - i * 2.2;
+      if (w <= 4) break;
+      const a = 0.15 * (1 - i / 26);
+      const off = Math.sin(t * 1.1 + i * 0.7) * 9;
+      ctx.beginPath();
+      ctx.ellipse(722 + off, y, w, 3.4, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,238,206,' + a.toFixed(3) + ')';
+      ctx.fill();
+    }
+
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 17; i++) {
+      const y = SURFACE + 26 + i * 21;
+      const phase = t * 0.55 + i * 0.9;
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 24) {
+        const yy = y + Math.sin(x * 0.011 + phase) * 3.2;
+        if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.10 - i * 0.005).toFixed(3) + ')';
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(0, SURFACE, W, 1.6);
+  }
+
+  function drawReeds() {
+    const stems = [
+      [34, 0.92], [66, 0.68], [94, 1.04], [126, 0.78], [156, 0.52],
+      [1006, 0.86], [974, 0.62], [948, 0.98]
+    ];
+    for (let i = 0; i < stems.length; i++) {
+      const x = stems[i][0], k = stems[i][1];
+      const h = 168 * k;
+      const sway = Math.sin(G.t * 0.8 + i * 1.3) * 7 * k;
+      ctx.beginPath();
+      ctx.moveTo(x, H + 4);
+      ctx.quadraticCurveTo(x + sway * 0.4, H - h * 0.55, x + sway, H - h);
+      ctx.lineWidth = 2.6 * k;
+      ctx.strokeStyle = 'rgba(26,48,44,0.78)';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+  }
+
+  function drawFish(f) {
+    if (!f) return;
+    const s = f.sp.size;
+    const bob = Math.sin(G.t * 1.7 + f.seed) * 5;
+    ctx.save();
+    ctx.translate(f.x, f.y + bob);
+    ctx.scale(f.dir, 1);
+    ctx.globalAlpha = Math.max(0, f.alpha);
+    ctx.fillStyle = '#0A2321';
+
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 52 * s, 18 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const wag = Math.sin(G.t * 6 + f.seed) * 0.6;
+    ctx.beginPath();
+    ctx.moveTo(-44 * s, 0);
+    ctx.lineTo(-80 * s, (-17 + wag * 9) * s);
+    ctx.lineTo(-70 * s, 0);
+    ctx.lineTo(-80 * s, (17 + wag * 9) * s);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(8 * s, -15 * s);
+    ctx.quadraticCurveTo(-2 * s, -36 * s, -20 * s, -13 * s);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function floatPos() {
+    const bob = Math.sin(G.t * 2.2) * 2.4;
+    return { x: G.float.x, y: G.float.y + bob + G.float.dipOff };
+  }
+
+  function drawRodAndLine() {
+    const p = floatPos();
+    const tip = G.rod.tip, base = G.rod.base, ctrl = G.rod.ctrl;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y);
+    ctx.quadraticCurveTo(ctrl.x, ctrl.y, tip.x, tip.y);
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = '#3A2C21';
+    ctx.stroke();
+    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.stroke();
+    ctx.restore();
+
+    const mx = (tip.x + p.x) / 2;
+    const my = (tip.y + p.y) / 2 + G.rod.sag;
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.quadraticCurveTo(mx, my, p.x, p.y - 16);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+  }
+
+  function drawFloat() {
+    const p = floatPos();
+    const inWater = G.mode !== 'title';
+
+    if (inWater) {
+      ctx.beginPath();
+      ctx.ellipse(p.x, SURFACE + 2, 17, 4.2, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - 4);
+    ctx.lineTo(p.x, p.y + 17);
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = '#F4EDDD';
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - 19);
+    ctx.lineTo(p.x, p.y - 3);
+    ctx.lineWidth = 4.6;
+    ctx.strokeStyle = '#C9482F';
+    ctx.stroke();
+
+    if (G.float.dipOff > 6) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - 14, 22, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(201,72,47,' + Math.min(0.5, G.float.dipOff / 50) + ')';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  function drawRipples() {
+    for (let i = 0; i < G.ripples.length; i++) {
+      const r = G.ripples[i];
+      const k = r.life / r.max;
+      const rad = r.r0 + k * r.grow;
+      ctx.beginPath();
+      ctx.ellipse(r.x, r.y, rad, rad * 0.3, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.5 * (1 - k)).toFixed(3) + ')';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+  }
+
+  function addRipple(x, y, r0, grow) {
+    G.ripples.push({ x: x, y: y + 2, r0: r0, grow: grow || 60, life: 0, max: 1.4 });
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    drawHills();
+    drawWater(G.t);
+    drawFish(G.fish);
+    drawRipples();
+    drawRodAndLine();
+    drawFloat();
+    drawReeds();
+  }
+
+  /* ---------------- 逻辑 ---------------- */
+
+  function setMode(m) {
+    G.mode = m;
+    ui.bars.classList.toggle('hidden', !(m === 'inspect' || m === 'dip'));
+    ui.baitbar.classList.toggle('locked', m !== 'aim');
+    const hints = {
+      aim: '点一下水面，把钩放下去',
+      cast: '……',
+      wait: '水面很安静',
+      inspect: '点一下逗它，或者别动',
+      dip: '提！',
+      result: '',
+      end: ''
+    };
+    ui.hint.textContent = hints[m] || '';
+    ui.hint.classList.toggle('hot', m === 'dip');
+  }
+
+  function syncHUD() {
+    ui.castNum.textContent = G.castsLeft;
+    ui.fishNum.textContent = G.caughtCount;
+    ui.scoreNum.textContent = G.score;
+    const btns = ui.baitbar.querySelectorAll('.bait');
+    for (let i = 0; i < btns.length; i++) {
+      const id = btns[i].getAttribute('data-bait');
+      const n = G.baits[id] == null ? 0 : G.baits[id];
+      btns[i].querySelector('em').textContent = n;
+      btns[i].classList.toggle('active', id === G.bait);
+      btns[i].classList.toggle('empty', n <= 0);
+    }
+  }
+
+  function toast(msg) {
+    ui.toast.textContent = msg;
+    ui.toast.classList.add('on');
+    clearTimeout(G.toastT);
+    G.toastT = setTimeout(function () { ui.toast.classList.remove('on'); }, 1900);
+  }
+
+  function pickSpecies() {
+    let total = 0;
+    for (let i = 0; i < SPECIES.length; i++) total += SPECIES[i].weight;
+    let r = Math.random() * total;
+    for (let i = 0; i < SPECIES.length; i++) {
+      r -= SPECIES[i].weight;
+      if (r <= 0) return SPECIES[i];
+    }
+    return SPECIES[0];
+  }
+
+  function makeFish(sp, targetX) {
+    const fromLeft = Math.random() < 0.5;
+    const off = 330 + Math.random() * 70;
+    const x = fromLeft ? targetX - off : targetX + off;
+    const rec = spRec(sp.id);
+
+    const learnW = 1 + Math.min(1.1, rec.spook * 0.16);
+    const learnI = Math.max(0.55, 1 - rec.caught * 0.07);
+
+    const fav = Object.keys(rec.baitUse).sort(function (a, b) { return rec.baitUse[b] - rec.baitUse[a]; })[0];
+    const favMatch = fav && rec.baitUse[fav] >= 2 && fav === G.baitUsed;
+
+    return {
+      sp: sp,
+      x: x,
+      y: SURFACE + 84,
+      dir: fromLeft ? 1 : -1,
+      age: 0,
+      targetX: targetX,
+      interest: 0,
+      wariness: 0,
+      dipTimer: -1,
+      dipCooldown: 0.7,
+      dipType: null,
+      dipLeft: 0,
+      seed: Math.random() * 10,
+      alpha: 0.20,
+      flee: false,
+      vx: 0,
+      caught: false,
+      learnW: learnW * (favMatch ? 1.18 : 1),
+      learnI: learnI * (favMatch ? 0.78 : 1),
+      favMatch: !!favMatch
+    };
+  }
+
+  function baitMult(sp) {
+    if (sp.likes === null) return 0.8;
+    return sp.likes === G.baitUsed ? 1 : 0.42;
+  }
+
+  function cast(x) {
+    if (G.mode !== 'aim') return;
+    if (G.castsLeft <= 0) return;
+    if ((G.baits[G.bait] || 0) <= 0) { toast('这个饵用完了，换一个'); return; }
+
+    G.baits[G.bait]--;
+    G.castsLeft--;
+    G.baitUsed = G.bait;
+    G.stats.casts++;
+
+    if (G.fish) { G.fish = null; }
+    G.float.x = Math.max(150, Math.min(850, x));
+    G.float.startY = 172;
+    G.float.y = G.float.startY;
+    G.float.dipOff = 0;
+    G.float.dipTarget = 0;
+    G.castT = 0;
+    setMode('cast');
+    syncHUD();
+    blip(560, 0.06, 0.03, 'triangle');
+  }
+
+  function startWait() {
+    const sp = pickSpecies();
+    G.fish = makeFish(sp, G.float.x + (Math.random() * 60 - 30));
+    G.waitT = 0;
+    setMode('wait');
+  }
+
+  function jiggle() {
+    const f = G.fish;
+    if (!f) return;
+    f.interest = Math.min(100, f.interest + 10 + Math.random() * 8);
+    f.wariness = Math.min(100, f.wariness + f.sp.jiggleW * (0.6 + Math.random() * 0.45));
+    G.stats.jiggle++;
+    G.float.dipTarget = 7;
+    setTimeout(function () {
+      if (G.mode === 'inspect') G.float.dipTarget = 0;
+    }, 130);
+    addRipple(G.float.x, SURFACE, 6, 44);
+    blip(300 + Math.random() * 60, 0.06, 0.035, 'sine');
+
+    if (f.wariness >= 100) spook('它走了。你手太快。');
+  }
+
+  function beginDip() {
+    const f = G.fish;
+    const rec = spRec(f.sp.id);
+    const fakeChance = Math.min(0.52, 0.10 + f.wariness / 100 * 0.34 + (rec.caught || 0) * 0.025);
+    const fake = Math.random() < fakeChance;
+
+    f.dipType = fake ? 'fake' : 'real';
+    f.dipLeft = f.sp.window;
+    G.float.dipTarget = fake ? 10 : 27;
+    G.rod.sagTarget = 6;
+    addRipple(G.float.x, SURFACE, fake ? 7 : 14, fake ? 40 : 74);
+
+    if (fake) {
+      blip(210, 0.10, 0.03, 'sine');
+    } else {
+      G.stats.realDips++;
+      blip(140, 0.16, 0.05, 'sine');
+    }
+    setMode('dip');
+  }
+
+  function strike() {
+    const f = G.fish;
+    if (!f || G.mode !== 'dip') return;
+
+    G.rod.sagTarget = -14;
+    addRipple(G.float.x, SURFACE, 10, 110);
+
+    if (f.dipType === 'fake') {
+      G.stats.fooled++;
+      mem.beats++;
+      spook('空竿。它在水下笑你。');
+      return;
+    }
+    catchFish(f);
+  }
+
+  function catchFish(f) {
+    const kg = +(f.sp.size * (1.1 + Math.random() * 1.5)).toFixed(2);
+    const bonus = 1 + (100 - f.wariness) / 260;
+    const pts = Math.round(f.sp.value * kg * bonus);
+
+    G.score += pts;
+    G.caughtCount++;
+    G.stats.catches++;
+    mem.catches++;
+
+    const rec = spRec(f.sp.id);
+    rec.caught++;
+    rec.baitUse[G.baitUsed] = (rec.baitUse[G.baitUsed] || 0) + 1;
+
+    f.caught = true;
+    f.flee = false;
+    G.float.dipTarget = 0;
+
+    toast('上钩 · ' + f.sp.name + ' ' + kg + 'kg   +' + pts);
+    blip(660, 0.12, 0.05, 'triangle');
+    setTimeout(function () { blip(880, 0.16, 0.04, 'triangle'); }, 90);
+    endResult(1.7);
+  }
+
+  function spook(msg) {
+    const f = G.fish;
+    if (!f) return;
+    f.flee = true;
+    f.vx = (f.x < G.float.x ? -1 : 1) * 300;
+    f.alpha = Math.min(f.alpha, 0.26);
+    G.stats.spooked++;
+    spRec(f.sp.id).spook++;
+    G.float.dipTarget = 0;
+    G.rod.sagTarget = 26;
+    toast(msg);
+    blip(110, 0.26, 0.045, 'sawtooth');
+    endResult(1.35);
+  }
+
+  function endResult(sec) {
+    G.resultT = sec;
+    setMode('result');
+  }
+
+  function nextCast() {
+    const left = G.baits.worm + G.baits.corn + G.baits.lure;
+    if (G.castsLeft <= 0 || left <= 0) { endRound(); return; }
+    G.fish = null;
+    setMode('aim');
+  }
+
+  function endRound() {
+    mem.round++;
+    mem.casts += G.stats.casts;
+    try { window.localStorage.setItem(MEM_KEY, JSON.stringify(mem)); } catch (e) { /* 隐私模式 */ }
+
+    const casts = Math.max(1, G.stats.casts);
+    const jpc = G.stats.jiggle / casts;
+    const avgWait = G.stats.waitSum / casts;
+    const foolRate = G.stats.fooled / casts;
+
+    let title = '摇摆不定型';
+    let note = '该样本的行为缺乏规律，暂无法归类。建议增加投放次数。';
+    if (foolRate > 0.18) {
+      title = '容易被骗型';
+      note = '该样本对假动作几乎没有抵抗能力。这是我们最喜欢的一种。';
+    } else if (jpc > 3.4) {
+      title = '手痒型';
+      note = '该样本无法忍受静止。手指一动，鱼就知道。';
+    } else if (avgWait > 8 && jpc < 1.6 && G.stats.spooked <= 1) {
+      title = '石头型';
+      note = '该样本一动不动。目前没有有效手段，只能继续观察。';
+    } else if (G.stats.spooked === 0 && G.stats.catches >= 4) {
+      title = '老练型';
+      note = '该样本已经掌握节奏。建议下一轮更换饵料配方。';
+    }
+
+    const ranked = Object.keys(mem.species)
+      .map(function (k) {
+        const s = SPECIES.filter(function (x) { return x.id === k; })[0];
+        return { name: s ? s.name : k, spook: mem.species[k].spook || 0 };
+      })
+      .sort(function (a, b) { return b.spook - a.spook; });
+    const top = ranked[0];
+    const extra = top && top.spook > 0
+      ? '<br>' + top.name + '已经给你起了外号。'
+      : '';
+
+    ui.overlay.innerHTML =
+      '<div class="card">' +
+        '<p class="eyebrow">本轮结束 · 第 ' + (mem.round - 1) + ' 轮</p>' +
+        '<h2>' + G.caughtCount + ' 条 · ' + G.score + ' 分</h2>' +
+        '<div class="grid">' +
+          '<div><b>' + jpc.toFixed(1) + '</b><span>平均逗竿 / 竿</span></div>' +
+          '<div><b>' + avgWait.toFixed(1) + 's</b><span>平均忍耐</span></div>' +
+          '<div><b>' + G.stats.spooked + '</b><span>惊鱼</span></div>' +
+          '<div><b>' + G.stats.fooled + '</b><span>被假口骗</span></div>' +
+        '</div>' +
+        '<p class="profile">你的行为画像：<strong>' + title + '</strong></p>' +
+        '<div class="note"><b>鱼塘研究所 · 备注</b>' + note + extra + '</div>' +
+        '<div class="row-btn">' +
+          '<button class="primary" id="againBtn">再钓一轮</button>' +
+          '<button class="ghost" id="resetBtn">清空鱼塘记忆</button>' +
+        '</div>' +
+        '<p class="small">下一轮，它们会记得你。</p>' +
+      '</div>';
+
+    ui.overlay.classList.add('show');
+    setMode('end');
+
+    $('againBtn').addEventListener('click', function () {
+      ui.overlay.classList.remove('show');
+      resetRun();
+      setMode('aim');
+    });
+    $('resetBtn').addEventListener('click', function () {
+      try { window.localStorage.removeItem(MEM_KEY); } catch (e) { /* 无所谓 */ }
+      mem = blankMem();
+      ui.overlay.classList.remove('show');
+      resetRun();
+      setMode('aim');
+      toast('鱼塘清空了。恭喜，它们不认识你了。');
+    });
+  }
+
+  /* ---------------- 更新 ---------------- */
+
+  function updateFish(dt) {
+    const f = G.fish;
+    if (!f) return;
+    f.age += dt;
+
+    if (f.caught) {
+      f.y -= 320 * dt;
+      f.alpha -= dt * 0.9;
+      if (f.alpha <= 0) { G.fish = null; }
+      return;
+    }
+
+    if (f.flee) {
+      f.x += f.vx * dt;
+      f.alpha -= dt * 0.55;
+      if (f.alpha <= 0 || f.x < -90 || f.x > W + 90) { G.fish = null; }
+      return;
+    }
+
+    const near = 1 - Math.min(1, Math.abs(f.x - G.float.x) / 260);
+    const fadeIn = Math.min(1, f.age / 0.9);
+    f.alpha = (0.18 + near * 0.16) * fadeIn;
+
+    if (G.mode === 'inspect' || G.mode === 'dip') {
+      const t = G.t;
+      f.x = f.targetX + Math.sin(t * 1.5 + f.seed) * 16;
+      f.y = SURFACE + 78 + Math.sin(t * 1.1 + f.seed) * 6;
+      f.dir = Math.cos(t * 1.5 + f.seed) > 0 ? 1 : -1;
+    }
+  }
+
+  function updateMode(dt) {
+    if (G.mode === 'cast') {
+      G.castT += dt;
+      const k = Math.min(1, G.castT / 0.45);
+      G.float.y = G.float.startY + (SURFACE - G.float.startY) * (k * k);
+      if (k >= 1) {
+        G.float.y = SURFACE;
+        addRipple(G.float.x, SURFACE, 5, 70);
+        blip(170, 0.18, 0.05, 'sine');
+        startWait();
+      }
+      return;
+    }
+
+    if (G.mode === 'wait') {
+      const f = G.fish;
+      if (!f) return;
+      const dx = f.targetX - f.x;
+      if (Math.abs(dx) > 10) {
+        f.x += Math.sign(dx) * 190 * dt;
+        f.dir = Math.sign(dx);
+      } else {
+        f.x = f.targetX;
+        G.waitT = 0;
+        setMode('inspect');
+        blip(420, 0.06, 0.02, 'sine');
+      }
+      return;
+    }
+
+    if (G.mode === 'inspect') {
+      const f = G.fish;
+      if (!f) return;
+      G.stats.waitSum += dt;
+      G.waitT += dt;
+
+      const bm = baitMult(f.sp);
+      f.interest = Math.min(100, f.interest + f.sp.iRate * bm * f.learnI * dt);
+      f.wariness = Math.min(100, f.wariness + f.sp.wRate * f.learnW * dt * (1 + f.interest / 220));
+
+      if (f.wariness >= 100) { spook('警觉到头。它不玩了。'); return; }
+
+      if (f.interest >= 72) {
+        f.dipCooldown -= dt;
+        if (f.dipCooldown <= 0 && f.dipTimer < 0) {
+          f.dipTimer = 0.25 + Math.random() * 0.95;
+        }
+        if (f.dipTimer > 0) {
+          f.dipTimer -= dt;
+          if (f.dipTimer <= 0) { f.dipTimer = -1; beginDip(); return; }
+        }
+      }
+      return;
+    }
+
+    if (G.mode === 'dip') {
+      const f = G.fish;
+      if (!f) return;
+      f.dipLeft -= dt;
+      if (f.dipLeft <= 0) {
+        if (f.dipType === 'real') {
+          G.stats.late++;
+          G.float.dipTarget = 0;
+          G.rod.sagTarget = 26;
+          toast('饵没了。它连钩都没碰。');
+          f.flee = true;
+          f.vx = (f.x < G.float.x ? -1 : 1) * 260;
+          f.alpha = Math.min(f.alpha, 0.26);
+          blip(180, 0.22, 0.04, 'sine');
+          endResult(1.3);
+        } else {
+          f.interest = Math.max(0, f.interest - 12);
+          f.dipCooldown = 1.5;
+          f.dipType = null;
+          G.float.dipTarget = 0;
+          G.rod.sagTarget = 26;
+          setMode('inspect');
+        }
+      }
+      return;
+    }
+
+    if (G.mode === 'result') {
+      G.resultT -= dt;
+      if (G.resultT <= 0) nextCast();
+    }
+  }
+
+  function updateBars() {
+    const f = G.fish;
+    if (!f || (G.mode !== 'inspect' && G.mode !== 'dip')) return;
+    ui.barI.style.width = f.interest.toFixed(0) + '%';
+    ui.barW.style.width = f.wariness.toFixed(0) + '%';
+    ui.fishName.textContent = f.sp.name;
+    ui.fishTag.textContent = (f.learnW > 1.25 || f.favMatch) ? '它记得你' : '新面孔';
+  }
+
+  function update(dt) {
+    G.t += dt;
+
+    G.float.dipOff += (G.float.dipTarget - G.float.dipOff) * Math.min(1, dt * 16);
+    G.rod.sag += (G.rod.sagTarget - G.rod.sag) * Math.min(1, dt * 12);
+    if (G.rod.sagTarget !== 26 && G.mode !== 'dip' && G.mode !== 'inspect') G.rod.sagTarget = 26;
+
+    for (let i = G.ripples.length - 1; i >= 0; i--) {
+      const r = G.ripples[i];
+      r.life += dt;
+      if (r.life >= r.max) G.ripples.splice(i, 1);
+    }
+
+    updateFish(dt);
+    updateMode(dt);
+    updateBars();
+  }
+
+  /* ---------------- 输入 ---------------- */
+
+  function act(x, y) {
+    if (G.mode === 'aim') {
+      cast(y > SURFACE - 40 ? x : 520);
+    } else if (G.mode === 'inspect') {
+      jiggle();
+    } else if (G.mode === 'dip') {
+      strike();
+    }
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * W;
+    const y = (e.clientY - r.top) / r.height * H;
+    act(x, y);
+  });
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      act(520, SURFACE + 60);
+    }
+  });
+
+  ui.baitbar.addEventListener('click', function (e) {
+    const btn = e.target.closest ? e.target.closest('.bait') : null;
+    if (!btn) return;
+    if (G.mode !== 'aim') return;
+    const id = btn.getAttribute('data-bait');
+    if ((G.baits[id] || 0) <= 0) return;
+    G.bait = id;
+    syncHUD();
+    blip(480, 0.04, 0.02, 'triangle');
+  });
+
+  ui.soundBtn.addEventListener('click', function () {
+    muted = !muted;
+    ui.soundBtn.classList.toggle('off', muted);
+    ui.soundBtn.textContent = muted ? '静' : '声';
+  });
+
+  function startGame() {
+    ui.overlay.classList.remove('show');
+    resetRun();
+    setMode('aim');
+    blip(380, 0.08, 0.03, 'sine');
+  }
+
+  $('startBtn').addEventListener('click', startGame);
+
+  /* ---------------- 启动 ---------------- */
+
+  function init() {
+    fit();
+    resetRun();
+    setMode('title');
+    ui.memLine.textContent = mem.round > 1
+      ? '鱼塘记忆 · 第 ' + mem.round + ' 轮 · 它们已经认识你了'
+      : '第 1 轮 · 水面下还没有人认识你';
+
+    let last = 0;
+    function loop(ts) {
+      if (!last) last = ts;
+      let dt = (ts - last) / 1000;
+      last = ts;
+      if (dt > 0.05) dt = 0.05;
+      update(dt);
+      render();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
