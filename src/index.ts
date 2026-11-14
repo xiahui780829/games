@@ -3,6 +3,7 @@ import fishFishingYouHtml from './games/fish-fishing-you.html';
 import demolitionMasterHtml from './games/demolition-master.html';
 import doorSurvivalHtml from './games/door-survival.html';
 import coinFighterHtml from './games/coin-fighter.html';
+import carraceHtml from './games/竞速灰盒 · 过弯火花/index.html';
 // 加新游戏：
 // import game4Html from './games/game-4.html';
 
@@ -36,6 +37,12 @@ const GAMES = [
     title: '金币战场',
     desc: '攒金币·造军队·推掉对面碉堡',
     html: coinFighterHtml,
+  },
+	{
+    path: '/carrace',
+    title: '竞速灰盒垂直切片 · 过弯火花',
+    desc: '(beta)这局竞速有没有竞争欲望',
+    html: carraceHtml,
   },
   // { path: '/game-4', title: '...', desc: '...', html: game4Html },
 ];
