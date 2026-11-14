@@ -1,8 +1,10 @@
 import rhythmSnakeHtml from './games/rhythm-snake.html';
 import fishFishingYouHtml from './games/fish-fishing-you.html';
 import demolitionMasterHtml from './games/demolition-master.html';
+import doorSurvivalHtml from './games/door-survival.html';
+import coinFighterHtml from './games/coin-fighter.html';
 // 加新游戏：
-// import game3Html from './games/game-3.html';
+// import game4Html from './games/game-4.html';
 
 const GAMES = [
   {
@@ -23,19 +25,19 @@ const GAMES = [
     desc: '炸药有限，邻居就在隔壁。放好炸药，把楼压到红线以下',
     html: demolitionMasterHtml,
   },
-	{ 
-	 path: '/door-survival', 
-	 title: '你只有一张床和一扇门', 
-	 desc: '躺上去，就再也下不来了', 
-	 html: doorsurvivalHtml,
-	},
-	{ 
-	 path: '/coin-fighter', 
-	 title: '金币战场', 
-	 desc: '攒金币·造军队·推掉对面碉堡', 
-	 html: coinfighterHtml,
-	},
-  // { path: '/game-3', title: '...', desc: '...', html: game3Html },
+  {
+    path: '/door-survival',
+    title: '你只有一张床和一扇门',
+    desc: '躺上去，就再也下不来了',
+    html: doorSurvivalHtml,
+  },
+  {
+    path: '/coin-fighter',
+    title: '金币战场',
+    desc: '攒金币·造军队·推掉对面碉堡',
+    html: coinFighterHtml,
+  },
+  // { path: '/game-4', title: '...', desc: '...', html: game4Html },
 ];
 
 export default {
